@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Baseball Log</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="home" class="screen">
+        <h1>Baseball Log</h1>
+
+        <div class="section">
+            <h2>Select a Team</h2>
+            <select id="team-select">
+                <option value="">-- No teams yet --</option>
+            </select>
+            <button id="open-team-btn" disabled>Open Team</button>
+        </div>
+
+        <div class="section">
+            <button id="show-create-btn">Create New Team</button>
+        </div>
+    </div>
+
+    <div id="create-team" class="screen hidden">
+        <h1>Create New Team</h1>
+        <form id="create-team-form">
+            <label for="team-name">Team Name</label>
+            <input type="text" id="team-name" required>
+
+            <label for="age-group">Age Group</label>
+            <input type="text" id="age-group" placeholder="e.g. 12U" required>
+
+            <label for="location">Location</label>
+            <input type="text" id="location" placeholder="e.g. Austin, TX" required>
+
+            <div class="form-buttons">
+                <button type="submit">Create Team</button>
+                <button type="button" id="cancel-create-btn">Cancel</button>
+            </div>
+        </form>
+        <p id="create-error" class="error hidden"></p>
+    </div>
+
+    <div id="team-dashboard" class="screen hidden">
+        <div class="dashboard-header">
+            <button id="back-home-btn" class="back-btn">Back</button>
+            <h1 id="dashboard-title"></h1>
+        </div>
+
+        <div class="dashboard-layout">
+            <div class="dashboard-left">
+                <div class="left-buttons">
+                    <button id="add-player-btn" class="btn-action">Add Player</button>
+                </div>
+
+                <div class="section">
+                    <h2>Roster</h2>
+                    <ul id="roster-list"></ul>
+                </div>
+            </div>
+
+            <div class="dashboard-right">
+                <div class="right-buttons">
+                    <button id="create-game-btn" class="btn-action btn-green">Create Game</button>
+                </div>
+                <div class="games-columns">
+                    <div class="games-column">
+                        <h2>Active / Upcoming</h2>
+                        <div id="games-active"></div>
+                        <p id="no-active" class="no-games-msg">No active games.</p>
+                    </div>
+                    <div class="games-column">
+                        <h2>Finished</h2>
+                        <div id="games-finished"></div>
+                        <p id="no-finished" class="no-games-msg">No finished games.</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add Player Modal -->
+    <div id="add-player-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <h2>Add Player</h2>
+            <form id="add-player-form">
+                <label for="player-number">Number</label>
+                <input type="text" id="player-number" placeholder="e.g. 7" required>
+                <label for="player-first">First Name</label>
+                <input type="text" id="player-first" required>
+                <label for="player-last">Last Name</label>
+                <input type="text" id="player-last" required>
+                <div class="form-buttons">
+                    <button type="submit">Save</button>
+                    <button type="button" id="cancel-player-btn" class="btn-cancel">Cancel</button>
+                </div>
+                <p id="player-error" class="error hidden"></p>
+            </form>
+        </div>
+    </div>
+
+    <!-- Create Game Modal -->
+    <div id="create-game-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <h2>Create Game</h2>
+            <form id="create-game-form">
+                <label for="game-opponent">Opponent</label>
+                <input type="text" id="game-opponent" required>
+                <label for="game-home-away">Home / Away</label>
+                <select id="game-home-away">
+                    <option value="home">Home</option>
+                    <option value="away">Away</option>
+                </select>
+                <label for="game-location">Location</label>
+                <input type="text" id="game-location" required>
+                <div class="form-buttons">
+                    <button type="submit" class="btn-green">Create</button>
+                    <button type="button" id="cancel-game-btn" class="btn-cancel">Cancel</button>
+                </div>
+                <p id="game-error" class="error hidden"></p>
+            </form>
+        </div>
+    </div>
+
+    <!-- Position Picker Modal -->
+    <div id="position-picker-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <h2 id="position-picker-title">Select Position</h2>
+            <div class="position-grid">
+                <button class="pos-btn" data-pos="P">P</button>
+                <button class="pos-btn" data-pos="C">C</button>
+                <button class="pos-btn" data-pos="1B">1B</button>
+                <button class="pos-btn" data-pos="2B">2B</button>
+                <button class="pos-btn" data-pos="3B">3B</button>
+                <button class="pos-btn" data-pos="SS">SS</button>
+                <button class="pos-btn" data-pos="LF">LF</button>
+                <button class="pos-btn" data-pos="CF">CF</button>
+                <button class="pos-btn" data-pos="RF">RF</button>
+                <button class="pos-btn" data-pos="DH">DH</button>
+                <button class="pos-btn" data-pos="None">None</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Game Add Player Modal -->
+    <div id="game-add-player-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <h2 id="game-add-player-title">Add Player</h2>
+            <form id="game-add-player-form">
+                <input type="hidden" id="game-add-player-side">
+                <label for="game-player-number">Number</label>
+                <input type="text" id="game-player-number" placeholder="e.g. 7" required>
+                <label for="game-player-first">First Name</label>
+                <input type="text" id="game-player-first" required>
+                <label for="game-player-last">Last Name</label>
+                <input type="text" id="game-player-last" required>
+                <div class="form-buttons">
+                    <button type="submit">Save</button>
+                    <button type="button" id="cancel-game-player-btn" class="btn-cancel">Cancel</button>
+                </div>
+                <p id="game-player-error" class="error hidden"></p>
+            </form>
+        </div>
+    </div>
+
+    <!-- Enter Game Modal -->
+    <div id="enter-game-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <h2 id="enter-game-title"></h2>
+            <input type="hidden" id="enter-game-id">
+            <p>Ready to enter game.</p>
+            <div class="form-buttons">
+                <button id="start-game-btn" class="btn-green">Enter Game</button>
+                <button type="button" id="cancel-enter-game-btn" class="btn-cancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Game Screen -->
+    <div id="game-screen" class="screen hidden">
+        <div class="field-container">
+            <div class="field-overlay"></div>
+        </div>
+        <div class="game-screen-top-row">
+            <button id="back-dashboard-btn" class="back-btn">Back</button>
+            <div class="score-bug">
+            <div class="score-bug-top">
+                <div class="score-bug-team">
+                    <span class="score-bug-label">HOME</span>
+                    <span class="score-bug-name" id="sb-home-name">--</span>
+                </div>
+                <div class="score-bug-scores">
+                    <span class="score-bug-score" id="sb-home-score">0</span>
+                    <span class="score-bug-divider">-</span>
+                    <span class="score-bug-score" id="sb-away-score">0</span>
+                </div>
+                <div class="score-bug-team">
+                    <span class="score-bug-label">AWAY</span>
+                    <span class="score-bug-name" id="sb-away-name">--</span>
+                </div>
+            </div>
+            <div class="score-bug-bottom">
+                <div class="score-bug-inning">
+                    <span id="sb-inning-half">TOP</span>
+                    <span id="sb-inning-num">1</span>
+                </div>
+                <div class="score-bug-bases">
+                    <svg class="bases-diamond" viewBox="0 0 52 40" width="52" height="40">
+                        <rect id="sb-base-2" class="base" x="19" y="5" width="14" height="14" rx="1" transform="rotate(45 26 12)"/>
+                        <rect id="sb-base-3" class="base" x="5" y="19" width="14" height="14" rx="1" transform="rotate(45 12 26)"/>
+                        <rect id="sb-base-1" class="base" x="33" y="19" width="14" height="14" rx="1" transform="rotate(45 40 26)"/>
+                    </svg>
+                </div>
+                <div class="score-bug-count-outs">
+                    <div class="score-bug-count">
+                        <span id="sb-balls">0</span>-<span id="sb-strikes">0</span>
+                    </div>
+                    <div class="score-bug-outs">
+                        <span class="out-dot" id="sb-out-1"></span>
+                        <span class="out-dot" id="sb-out-2"></span>
+                        <span class="out-dot" id="sb-out-3"></span>
+                    </div>
+                </div>
+            </div>
+            <div class="score-bug-info">
+                <div class="score-bug-info-left">
+                    <span class="info-label">P:</span>
+                    <span id="sb-pitcher-name">--</span>
+                    <span class="info-pitch-count">(<span id="sb-pitch-count">0</span>)</span>
+                </div>
+                <div class="score-bug-info-right">
+                    <span class="info-label">AB:</span>
+                    <span id="sb-batter-name">--</span>
+                </div>
+            </div>
+        </div>
+        </div>
+        <div class="game-body">
+            <!-- Home Lineup (left side) -->
+            <div class="lineup-panel lineup-panel-left">
+                <div class="lineup-section">
+                    <div class="lineup-header">
+                        <span>Lineup</span>
+                        <button id="confirm-home-lineup" class="btn-small btn-confirmed">Confirm</button>
+                    </div>
+                    <ul id="home-lineup" class="lineup-list"></ul>
+                </div>
+                <div class="lineup-section">
+                    <div class="lineup-header">
+                        <span>Available</span>
+                        <button id="game-add-home-player" class="btn-small">+ Add</button>
+                    </div>
+                    <ul id="home-available" class="lineup-list"></ul>
+                </div>
+            </div>
+
+            <!-- Strike Zone (center) -->
+            <div class="strike-zone-container">
+                <div class="strike-zone">
+                    <div class="sz-row">
+                        <div class="sz-cell" data-row="1" data-col="1"></div>
+                        <div class="sz-cell" data-row="1" data-col="2"></div>
+                        <div class="sz-cell" data-row="1" data-col="3"></div>
+                    </div>
+                    <div class="sz-row">
+                        <div class="sz-cell" data-row="2" data-col="1"></div>
+                        <div class="sz-cell" data-row="2" data-col="2"></div>
+                        <div class="sz-cell" data-row="2" data-col="3"></div>
+                    </div>
+                    <div class="sz-row">
+                        <div class="sz-cell" data-row="3" data-col="1"></div>
+                        <div class="sz-cell" data-row="3" data-col="2"></div>
+                        <div class="sz-cell" data-row="3" data-col="3"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Away Lineup (right side) -->
+            <div class="lineup-panel lineup-panel-right">
+                <div class="lineup-section">
+                    <div class="lineup-header">
+                        <span>Lineup</span>
+                        <button id="confirm-away-lineup" class="btn-small btn-confirmed">Confirm</button>
+                    </div>
+                    <ul id="away-lineup" class="lineup-list"></ul>
+                </div>
+                <div class="lineup-section">
+                    <div class="lineup-header">
+                        <span>Available</span>
+                        <button id="game-add-away-player" class="btn-small">+ Add</button>
+                    </div>
+                    <ul id="away-available" class="lineup-list"></ul>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pitch Menu -->
+    <div id="pitch-menu" class="pitch-menu hidden">
+        <button class="pitch-menu-item" data-outcome="Strike">Strike</button>
+        <button class="pitch-menu-item" data-outcome="Ball">Ball</button>
+        <button class="pitch-menu-item" data-outcome="Foul">Foul</button>
+        <button class="pitch-menu-item" data-outcome="Foul Tip">Foul Tip</button>
+        <button class="pitch-menu-item" data-outcome="HBP">HBP</button>
+        <button class="pitch-menu-item" data-outcome="Hit">Hit</button>
+        <button class="pitch-menu-cancel" id="pitch-menu-cancel">Cancel</button>
+    </div>
+
+    <div id="ball-cursor" class="ball-cursor"></div>
+    <script src="app.js"></script>
+</body>
+</html>
