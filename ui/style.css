@@ -107,6 +107,37 @@ input[type="text"] {
     gap: 10px;
 }
 
+/* Autocomplete */
+.autocomplete-wrap {
+    position: relative;
+}
+
+.autocomplete-list {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    list-style: none;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-top: none;
+    border-radius: 0 0 6px 6px;
+    max-height: 150px;
+    overflow-y: auto;
+    z-index: 10;
+}
+
+.autocomplete-list li {
+    padding: 8px 12px;
+    font-size: 0.9rem;
+    cursor: pointer;
+}
+
+.autocomplete-list li:hover,
+.autocomplete-list li.active {
+    background: #dbeafe;
+}
+
 .error {
     margin-top: 12px;
     color: #dc2626;
@@ -351,6 +382,34 @@ input[type="text"] {
     position: absolute;
     left: 0;
     top: 10px;
+}
+
+.save-btn {
+    position: absolute;
+    right: 0;
+    top: 10px;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 20px;
+    font-size: 1rem;
+    cursor: pointer;
+}
+
+.save-btn.save-clean {
+    background: #9ca3af;
+}
+
+.save-btn.save-clean:hover {
+    background: #6b7280;
+}
+
+.save-btn.save-dirty {
+    background: #16a34a;
+}
+
+.save-btn.save-dirty:hover {
+    background: #15803d;
 }
 
 .field-container {

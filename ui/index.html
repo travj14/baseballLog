@@ -107,7 +107,10 @@
             <h2>Create Game</h2>
             <form id="create-game-form">
                 <label for="game-opponent">Opponent</label>
-                <input type="text" id="game-opponent" required>
+                <div class="autocomplete-wrap">
+                    <input type="text" id="game-opponent" autocomplete="off" required>
+                    <ul id="opponent-suggestions" class="autocomplete-list hidden"></ul>
+                </div>
                 <label for="game-home-away">Home / Away</label>
                 <select id="game-home-away">
                     <option value="home">Home</option>
@@ -185,6 +188,7 @@
         </div>
         <div class="game-screen-top-row">
             <button id="back-dashboard-btn" class="back-btn">Back</button>
+            <button id="save-game-btn" class="save-btn">Save</button>
             <div class="score-bug">
             <div class="score-bug-top">
                 <div class="score-bug-team">

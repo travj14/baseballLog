@@ -288,6 +288,12 @@ class Api:
 
         return self.current_game
 
+    def update_game_state(self, state):
+        if not self.current_game:
+            return {"error": "No active game."}
+        self.current_game["state"] = state
+        return self.current_game
+
     def save_game(self):
         if not self.current_team:
             return {"error": "No team selected."}

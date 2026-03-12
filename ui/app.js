@@ -142,6 +142,7 @@ async function loadDashboard() {
             status: game.status,
             home_lineup: game.home_lineup || [],
             away_lineup: game.away_lineup || [],
+            state: game.state || null,
         });
     });
 }
@@ -185,6 +186,7 @@ openTeamBtn.addEventListener("click", async () => {
 });
 
 backHomeBtn.addEventListener("click", () => {
+    document.querySelectorAll(".modal-overlay").forEach(m => m.classList.add("hidden"));
     showScreen(homeScreen);
 });
 
@@ -222,10 +224,53 @@ addPlayerForm.addEventListener("submit", async (e) => {
 
 // --- Create Game Modal ---
 
-createGameBtn.addEventListener("click", () => {
+const gameOpponentInput = document.getElementById("game-opponent");
+const opponentSuggestions = document.getElementById("opponent-suggestions");
+let rosterTeamsCache = [];
+
+createGameBtn.addEventListener("click", async () => {
     createGameForm.reset();
     gameError.classList.add("hidden");
+    opponentSuggestions.classList.add("hidden");
+    rosterTeamsCache = await window.pywebview.api.get_roster_teams();
     createGameModal.classList.remove("hidden");
+});
+
+gameOpponentInput.addEventListener("input", () => {
+    const query = gameOpponentInput.value.trim().toLowerCase();
+    opponentSuggestions.innerHTML = "";
+
+    if (!query) {
+        opponentSuggestions.classList.add("hidden");
+        return;
+    }
+
+    const matches = rosterTeamsCache.filter(t =>
+        !t.my_team && t.team_name.toLowerCase().includes(query)
+    );
+
+    if (matches.length === 0) {
+        opponentSuggestions.classList.add("hidden");
+        return;
+    }
+
+    matches.forEach(t => {
+        const li = document.createElement("li");
+        li.textContent = t.team_name;
+        li.addEventListener("click", () => {
+            gameOpponentInput.value = t.team_name;
+            opponentSuggestions.classList.add("hidden");
+        });
+        opponentSuggestions.appendChild(li);
+    });
+    opponentSuggestions.classList.remove("hidden");
+});
+
+// Hide suggestions when clicking outside
+createGameModal.addEventListener("click", (e) => {
+    if (!e.target.closest(".autocomplete-wrap")) {
+        opponentSuggestions.classList.add("hidden");
+    }
 });
 
 cancelGameBtn.addEventListener("click", () => {
@@ -258,6 +303,7 @@ const startGameBtn = document.getElementById("start-game-btn");
 const gameScreen = document.getElementById("game-screen");
 const gameScreenTitle = document.getElementById("game-screen-title");
 const backDashboardBtn = document.getElementById("back-dashboard-btn");
+const saveGameBtn = document.getElementById("save-game-btn");
 
 cancelEnterGameBtn.addEventListener("click", () => {
     enterGameModal.classList.add("hidden");
@@ -278,18 +324,65 @@ startGameBtn.addEventListener("click", async () => {
     document.getElementById("sb-away-name").textContent = awayName;
     document.getElementById("sb-home-score").textContent = selectedGame.home_score;
     document.getElementById("sb-away-score").textContent = selectedGame.away_score;
-    document.getElementById("sb-inning-half").textContent = "BOT";
-    document.getElementById("sb-inning-num").textContent = "1";
 
-    // Reset bases and outs
-    document.querySelectorAll(".base").forEach(b => b.classList.remove("active"));
-    document.querySelectorAll(".out-dot").forEach(d => d.classList.remove("active"));
+    // Restore or reset game state
+    const saved = selectedGame.state;
+    if (saved) {
+        inningNum = saved.inning_num || 1;
+        inningHalf = saved.inning_half || "top";
+        balls = saved.balls || 0;
+        strikes = saved.strikes || 0;
+        outs = saved.outs || 0;
+        bases = saved.bases || { first: false, second: false, third: false };
+        homeBatterIdx = saved.home_batter_idx || 0;
+        awayBatterIdx = saved.away_batter_idx || 0;
+    } else {
+        inningNum = 1;
+        inningHalf = "top";
+        balls = 0;
+        strikes = 0;
+        outs = 0;
+        bases = { first: false, second: false, third: false };
+        homeBatterIdx = 0;
+        awayBatterIdx = 0;
+    }
+    updateGameState();
+    markSaveClean();
 
     showScreen(gameScreen);
     await loadLineups();
 });
 
+function markSaveDirty() {
+    saveGameBtn.className = "save-btn save-dirty";
+}
+
+function markSaveClean() {
+    saveGameBtn.className = "save-btn save-clean";
+}
+
+saveGameBtn.addEventListener("click", async () => {
+    const state = {
+        inning_num: inningNum,
+        inning_half: inningHalf,
+        balls: balls,
+        strikes: strikes,
+        outs: outs,
+        bases: { first: bases.first, second: bases.second, third: bases.third },
+        home_batter_idx: homeBatterIdx,
+        away_batter_idx: awayBatterIdx,
+    };
+    await window.pywebview.api.update_game_state(state);
+    selectedGame.home_score = parseInt(document.getElementById("sb-home-score").textContent);
+    selectedGame.away_score = parseInt(document.getElementById("sb-away-score").textContent);
+    await window.pywebview.api.save_game();
+    markSaveClean();
+});
+
 backDashboardBtn.addEventListener("click", async () => {
+    // Close all open modals/menus
+    hidePitchMenu();
+    document.querySelectorAll(".modal-overlay").forEach(m => m.classList.add("hidden"));
     await loadDashboard();
     showScreen(dashboardScreen);
 });
@@ -385,7 +478,12 @@ let homeConfirmed = [];
 let awayConfirmed = [];
 let homeBatterIdx = 0;
 let awayBatterIdx = 0;
-let inningHalf = "bottom"; // "top" = away bats, home pitches; "bottom" = home bats, away pitches
+let inningHalf = "bottom";
+let inningNum = 1;
+let balls = 0;
+let strikes = 0;
+let outs = 0;
+let bases = { first: false, second: false, third: false };
 
 function lineupIds(side) {
     return (side === "home" ? homeLineup : awayLineup).map(e => e.id);
@@ -438,6 +536,28 @@ function renderLineup(side) {
     }
 
     markConfirmBtn(side);
+    updateInfoBar();
+}
+
+function updateGameState() {
+    // Inning
+    document.getElementById("sb-inning-half").textContent = inningHalf === "top" ? "TOP" : "BOT";
+    document.getElementById("sb-inning-num").textContent = inningNum;
+
+    // Count
+    document.getElementById("sb-balls").textContent = balls;
+    document.getElementById("sb-strikes").textContent = strikes;
+
+    // Outs
+    document.getElementById("sb-out-1").classList.toggle("active", outs >= 1);
+    document.getElementById("sb-out-2").classList.toggle("active", outs >= 2);
+    document.getElementById("sb-out-3").classList.toggle("active", outs >= 3);
+
+    // Bases
+    document.getElementById("sb-base-1").classList.toggle("active", bases.first);
+    document.getElementById("sb-base-2").classList.toggle("active", bases.second);
+    document.getElementById("sb-base-3").classList.toggle("active", bases.third);
+
     updateInfoBar();
 }
 
@@ -649,9 +769,113 @@ function hidePitchMenu() {
     ballCursor.classList.remove("pinned");
 }
 
+function advanceBatter() {
+    const battingSide = inningHalf === "top" ? "away" : "home";
+    const lineup = battingSide === "home" ? homeLineup : awayLineup;
+    if (battingSide === "home") {
+        homeBatterIdx = (homeBatterIdx + 1) % Math.max(lineup.length, 1);
+    } else {
+        awayBatterIdx = (awayBatterIdx + 1) % Math.max(lineup.length, 1);
+    }
+}
+
+function resetCount() {
+    balls = 0;
+    strikes = 0;
+}
+
+function recordOut() {
+    outs++;
+    resetCount();
+    if (outs >= 3) {
+        // Switch half inning
+        outs = 0;
+        bases = { first: false, second: false, third: false };
+        if (inningHalf === "top") {
+            inningHalf = "bottom";
+        } else {
+            inningHalf = "top";
+            inningNum++;
+        }
+    }
+    advanceBatter();
+    updateGameState();
+    renderLineup("home");
+    renderLineup("away");
+}
+
+function advanceRunners() {
+    // Push all runners forward one base, score from third
+    if (bases.third) {
+        const battingSide = inningHalf === "top" ? "away" : "home";
+        if (battingSide === "home") {
+            selectedGame.home_score++;
+            document.getElementById("sb-home-score").textContent = selectedGame.home_score;
+        } else {
+            selectedGame.away_score++;
+            document.getElementById("sb-away-score").textContent = selectedGame.away_score;
+        }
+    }
+    bases.third = bases.second;
+    bases.second = bases.first;
+    bases.first = false;
+}
+
 function handlePitchOutcome(outcome) {
-    // TODO: wire up to pitch recording logic
-    console.log("Pitch outcome:", outcome, "at", pitchClickX, pitchClickY);
+    markSaveDirty();
+    switch (outcome) {
+        case "Strike":
+            strikes++;
+            if (strikes >= 3) {
+                // Strikeout
+                recordOut();
+                return;
+            }
+            break;
+
+        case "Foul":
+            if (strikes < 2) {
+                strikes++;
+            }
+            break;
+
+        case "Foul Tip":
+            strikes++;
+            if (strikes >= 3) {
+                recordOut();
+                return;
+            }
+            break;
+
+        case "Ball":
+            balls++;
+            if (balls >= 4) {
+                // Walk — batter to first, push runners if forced
+                advanceRunners();
+                bases.first = true;
+                resetCount();
+                advanceBatter();
+            }
+            break;
+
+        case "HBP":
+            // Hit by pitch — batter to first, push runners if forced
+            advanceRunners();
+            bases.first = true;
+            resetCount();
+            advanceBatter();
+            break;
+
+        case "Hit":
+            // TODO: will need more detail (single/double/etc) later
+            resetCount();
+            advanceBatter();
+            break;
+    }
+
+    updateGameState();
+    renderLineup("home");
+    renderLineup("away");
 }
 
 document.querySelectorAll(".pitch-menu-item").forEach(btn => {
