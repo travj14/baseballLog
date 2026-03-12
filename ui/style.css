@@ -499,35 +499,34 @@ input[type="text"] {
 /* Pitcher / Batter Info Bar */
 .score-bug-info {
     display: flex;
-    margin-top: 0;
-    border-top: none;
+    margin-left: -20px;
+    margin-right: -20px;
 }
 
 .score-bug-info-left,
 .score-bug-info-right {
     flex: 1;
-    background: #f3f4f6;
     padding: 8px 12px;
     font-size: 0.8rem;
     font-weight: 600;
 }
 
 .score-bug-info-left {
-    border-radius: 0 0 0 12px;
+    background: #fee2e2;
     border-right: 1px solid #ddd;
 }
 
 .score-bug-info-right {
-    border-radius: 0 0 12px 0;
+    background: #dbeafe;
 }
 
 .info-label {
-    color: #999;
+    color: #666;
     margin-right: 4px;
 }
 
 .info-pitch-count {
-    color: #999;
+    color: #666;
     margin-left: 4px;
     font-weight: 400;
 }

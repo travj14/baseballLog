@@ -278,7 +278,7 @@ startGameBtn.addEventListener("click", async () => {
     document.getElementById("sb-away-name").textContent = awayName;
     document.getElementById("sb-home-score").textContent = selectedGame.home_score;
     document.getElementById("sb-away-score").textContent = selectedGame.away_score;
-    document.getElementById("sb-inning-half").textContent = "TOP";
+    document.getElementById("sb-inning-half").textContent = "BOT";
     document.getElementById("sb-inning-num").textContent = "1";
 
     // Reset bases and outs
@@ -385,7 +385,7 @@ let homeConfirmed = [];
 let awayConfirmed = [];
 let homeBatterIdx = 0;
 let awayBatterIdx = 0;
-let inningHalf = "top"; // "top" = away bats, home pitches
+let inningHalf = "bottom"; // "top" = away bats, home pitches; "bottom" = home bats, away pitches
 
 function lineupIds(side) {
     return (side === "home" ? homeLineup : awayLineup).map(e => e.id);
@@ -438,6 +438,37 @@ function renderLineup(side) {
     }
 
     markConfirmBtn(side);
+    updateInfoBar();
+}
+
+function updateInfoBar() {
+    const battingSide = inningHalf === "top" ? "away" : "home";
+    const fieldingSide = inningHalf === "top" ? "home" : "away";
+    const battingLineup = battingSide === "home" ? homeLineup : awayLineup;
+    const battingPlayers = battingSide === "home" ? homePlayers : awayPlayers;
+    const fieldingLineup = fieldingSide === "home" ? homeLineup : awayLineup;
+    const fieldingPlayers = fieldingSide === "home" ? homePlayers : awayPlayers;
+    const batterIdx = battingSide === "home" ? homeBatterIdx : awayBatterIdx;
+
+    // Batter
+    const batterEntry = battingLineup[batterIdx];
+    if (batterEntry) {
+        const batter = battingPlayers.find(p => p.id === batterEntry.id);
+        document.getElementById("sb-batter-name").textContent = batter
+            ? `${batter.first_name} ${batter.last_name}` : "--";
+    } else {
+        document.getElementById("sb-batter-name").textContent = "--";
+    }
+
+    // Pitcher
+    const pitcherEntry = fieldingLineup.find(e => e.position === "P");
+    if (pitcherEntry) {
+        const pitcher = fieldingPlayers.find(p => p.id === pitcherEntry.id);
+        document.getElementById("sb-pitcher-name").textContent = pitcher
+            ? `${pitcher.first_name} ${pitcher.last_name}` : "--";
+    } else {
+        document.getElementById("sb-pitcher-name").textContent = "--";
+    }
 }
 
 function initLineupDropZones() {
