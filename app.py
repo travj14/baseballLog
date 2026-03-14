@@ -243,6 +243,7 @@ class Api:
             "home_lineup": [],
             "away_lineup": [],
             "pitches": [],
+            "baserunning": [],
         }
 
         games.append(self.current_game)
@@ -288,10 +289,25 @@ class Api:
 
         return self.current_game
 
+    def record_baserunning(self, entry):
+        if not self.current_game:
+            return {"error": "No active game."}
+        if "baserunning" not in self.current_game:
+            self.current_game["baserunning"] = []
+        self.current_game["baserunning"].append(entry)
+        return self.current_game
+
     def update_game_state(self, state):
         if not self.current_game:
             return {"error": "No active game."}
         self.current_game["state"] = state
+        return self.current_game
+
+    def update_score(self, home_score, away_score):
+        if not self.current_game:
+            return {"error": "No active game."}
+        self.current_game["home_score"] = home_score
+        self.current_game["away_score"] = away_score
         return self.current_game
 
     def save_game(self):

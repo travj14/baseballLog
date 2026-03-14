@@ -299,6 +299,28 @@
                 </div>
             </div>
         </div>
+        <div class="game-bases-display">
+            <svg id="bases-svg" viewBox="0 0 230 230" width="230" height="230" overflow="visible">
+                <rect id="game-base-home" class="base-home" x="83" y="142" width="64" height="64" rx="4" transform="rotate(45 115 174)"/>
+                <rect id="game-base-2" class="base-large" x="83" y="14" width="64" height="64" rx="4" transform="rotate(45 115 46)" data-base="second"/>
+                <rect id="game-base-3" class="base-large" x="19" y="78" width="64" height="64" rx="4" transform="rotate(45 51 110)" data-base="third"/>
+                <rect id="game-base-1" class="base-large" x="147" y="78" width="64" height="64" rx="4" transform="rotate(45 179 110)" data-base="first"/>
+            </svg>
+            <div id="runner-drag-dot" class="runner-drag-dot" style="display:none;"></div>
+        </div>
+    </div>
+
+    <!-- Runner Resolution Panel (after hits) -->
+    <div id="runner-resolution" class="runner-resolution hidden">
+        <h3>Runner Resolution</h3>
+        <div id="runner-resolution-list"></div>
+        <div class="form-buttons">
+            <button id="runner-resolution-confirm" class="btn-green">Confirm</button>
+        </div>
+    </div>
+
+    <!-- Runner Action Menu -->
+    <div id="runner-menu" class="pitch-menu hidden">
     </div>
 
     <!-- Pitch Menu -->
@@ -308,8 +330,28 @@
         <button class="pitch-menu-item" data-outcome="Foul">Foul</button>
         <button class="pitch-menu-item" data-outcome="Foul Tip">Foul Tip</button>
         <button class="pitch-menu-item" data-outcome="HBP">HBP</button>
-        <button class="pitch-menu-item" data-outcome="Hit">Hit</button>
+        <button class="pitch-menu-item" data-outcome="Hit" id="pitch-menu-hit">Hit</button>
         <button class="pitch-menu-cancel" id="pitch-menu-cancel">Cancel</button>
+    </div>
+
+    <!-- Hit Submenu -->
+    <div id="hit-submenu" class="pitch-menu hidden">
+        <button class="pitch-menu-item" data-hit="Single">Single</button>
+        <button class="pitch-menu-item" data-hit="Double">Double</button>
+        <button class="pitch-menu-item" data-hit="Triple">Triple</button>
+        <button class="pitch-menu-item" data-hit="Home Run">Home Run</button>
+        <button class="pitch-menu-item" data-hit="Out">Out</button>
+        <button class="pitch-menu-item" data-hit="Error">Error</button>
+        <button class="pitch-menu-cancel" id="hit-submenu-cancel">Cancel</button>
+    </div>
+
+    <!-- Hit Type Submenu -->
+    <div id="hit-type-submenu" class="pitch-menu hidden">
+        <button class="pitch-menu-item" data-hittype="Ground Ball">Ground Ball</button>
+        <button class="pitch-menu-item" data-hittype="Line Drive">Line Drive</button>
+        <button class="pitch-menu-item" data-hittype="Fly Ball">Fly Ball</button>
+        <button class="pitch-menu-item" data-hittype="Pop Fly">Pop Fly</button>
+        <button class="pitch-menu-cancel" id="hit-type-cancel">Cancel</button>
     </div>
 
     <div id="ball-cursor" class="ball-cursor"></div>

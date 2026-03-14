@@ -333,7 +333,13 @@ startGameBtn.addEventListener("click", async () => {
         balls = saved.balls || 0;
         strikes = saved.strikes || 0;
         outs = saved.outs || 0;
-        bases = saved.bases || { first: false, second: false, third: false };
+        const savedBases = saved.bases || { first: null, second: null, third: null };
+        // Convert old boolean format to player ID format
+        bases = {
+            first: (savedBases.first === true || savedBases.first === false) ? null : savedBases.first,
+            second: (savedBases.second === true || savedBases.second === false) ? null : savedBases.second,
+            third: (savedBases.third === true || savedBases.third === false) ? null : savedBases.third,
+        };
         homeBatterIdx = saved.home_batter_idx || 0;
         awayBatterIdx = saved.away_batter_idx || 0;
     } else {
@@ -342,7 +348,7 @@ startGameBtn.addEventListener("click", async () => {
         balls = 0;
         strikes = 0;
         outs = 0;
-        bases = { first: false, second: false, third: false };
+        bases = { first: null, second: null, third: null };
         homeBatterIdx = 0;
         awayBatterIdx = 0;
     }
@@ -362,6 +368,8 @@ function markSaveClean() {
 }
 
 saveGameBtn.addEventListener("click", async () => {
+    const homeScore = parseInt(document.getElementById("sb-home-score").textContent);
+    const awayScore = parseInt(document.getElementById("sb-away-score").textContent);
     const state = {
         inning_num: inningNum,
         inning_half: inningHalf,
@@ -373,8 +381,7 @@ saveGameBtn.addEventListener("click", async () => {
         away_batter_idx: awayBatterIdx,
     };
     await window.pywebview.api.update_game_state(state);
-    selectedGame.home_score = parseInt(document.getElementById("sb-home-score").textContent);
-    selectedGame.away_score = parseInt(document.getElementById("sb-away-score").textContent);
+    await window.pywebview.api.update_score(homeScore, awayScore);
     await window.pywebview.api.save_game();
     markSaveClean();
 });
@@ -382,6 +389,7 @@ saveGameBtn.addEventListener("click", async () => {
 backDashboardBtn.addEventListener("click", async () => {
     // Close all open modals/menus
     hidePitchMenu();
+    clearPitchDots();
     document.querySelectorAll(".modal-overlay").forEach(m => m.classList.add("hidden"));
     await loadDashboard();
     showScreen(dashboardScreen);
@@ -483,7 +491,8 @@ let inningNum = 1;
 let balls = 0;
 let strikes = 0;
 let outs = 0;
-let bases = { first: false, second: false, third: false };
+let bases = { first: null, second: null, third: null };
+let lastPitchId = null;
 
 function lineupIds(side) {
     return (side === "home" ? homeLineup : awayLineup).map(e => e.id);
@@ -553,10 +562,18 @@ function updateGameState() {
     document.getElementById("sb-out-2").classList.toggle("active", outs >= 2);
     document.getElementById("sb-out-3").classList.toggle("active", outs >= 3);
 
-    // Bases
-    document.getElementById("sb-base-1").classList.toggle("active", bases.first);
-    document.getElementById("sb-base-2").classList.toggle("active", bases.second);
-    document.getElementById("sb-base-3").classList.toggle("active", bases.third);
+    // Bases (score bug)
+    document.getElementById("sb-base-1").classList.toggle("active", !!bases.first);
+    document.getElementById("sb-base-2").classList.toggle("active", !!bases.second);
+    document.getElementById("sb-base-3").classList.toggle("active", !!bases.third);
+
+    // Bases (bottom-right display)
+    const gb1 = document.getElementById("game-base-1");
+    const gb2 = document.getElementById("game-base-2");
+    const gb3 = document.getElementById("game-base-3");
+    if (gb1) gb1.classList.toggle("active", !!bases.first);
+    if (gb2) gb2.classList.toggle("active", !!bases.second);
+    if (gb3) gb3.classList.toggle("active", !!bases.third);
 
     updateInfoBar();
 }
@@ -753,9 +770,27 @@ let pitchClickY = 0;
 function showPitchMenu(x, y) {
     pitchClickX = x;
     pitchClickY = y;
-    pitchMenu.style.left = (x + 14) + "px";
-    pitchMenu.style.top = (y - 14) + "px";
+
+    // Temporarily show off-screen to measure height
+    pitchMenu.style.left = "-9999px";
+    pitchMenu.style.top = "-9999px";
     pitchMenu.classList.remove("hidden");
+    const menuH = pitchMenu.offsetHeight;
+    const menuW = pitchMenu.offsetWidth;
+
+    let left = x + 14;
+    let top = y - 14;
+
+    // Keep within viewport
+    if (top + menuH > window.innerHeight) {
+        top = window.innerHeight - menuH - 4;
+    }
+    if (left + menuW > window.innerWidth) {
+        left = x - menuW - 14;
+    }
+
+    pitchMenu.style.left = left + "px";
+    pitchMenu.style.top = top + "px";
     // Pin the ball in place at click location
     ballCursor.style.left = x + "px";
     ballCursor.style.top = y + "px";
@@ -764,8 +799,26 @@ function showPitchMenu(x, y) {
     document.body.style.cursor = "";
 }
 
+let pitchDots = [];
+
+function placePitchDot(x, y) {
+    const dot = document.createElement("div");
+    dot.className = "pitch-dot finalized";
+    dot.style.left = x + "px";
+    dot.style.top = y + "px";
+    document.body.appendChild(dot);
+    pitchDots.push(dot);
+}
+
+function clearPitchDots() {
+    pitchDots.forEach(dot => dot.remove());
+    pitchDots = [];
+}
+
 function hidePitchMenu() {
     pitchMenu.classList.add("hidden");
+    document.getElementById("hit-submenu").classList.add("hidden");
+    document.getElementById("hit-type-submenu").classList.add("hidden");
     ballCursor.classList.remove("pinned");
 }
 
@@ -787,10 +840,11 @@ function resetCount() {
 function recordOut() {
     outs++;
     resetCount();
+    endAtBat();
     if (outs >= 3) {
         // Switch half inning
         outs = 0;
-        bases = { first: false, second: false, third: false };
+        bases = { first: null, second: null, third: null };
         if (inningHalf === "top") {
             inningHalf = "bottom";
         } else {
@@ -804,30 +858,88 @@ function recordOut() {
     renderLineup("away");
 }
 
-function advanceRunners() {
-    // Push all runners forward one base, score from third
-    if (bases.third) {
-        const battingSide = inningHalf === "top" ? "away" : "home";
-        if (battingSide === "home") {
-            selectedGame.home_score++;
-            document.getElementById("sb-home-score").textContent = selectedGame.home_score;
-        } else {
-            selectedGame.away_score++;
-            document.getElementById("sb-away-score").textContent = selectedGame.away_score;
-        }
+function advanceRunnersForWalk() {
+    // Forced advancement for walks/HBP — only push runners when forced
+    const battingSide = inningHalf === "top" ? "away" : "home";
+    if (bases.first && bases.second && bases.third) {
+        // Bases loaded — runner on third scores
+        if (battingSide === "home") { selectedGame.home_score++; } else { selectedGame.away_score++; }
+        document.getElementById("sb-home-score").textContent = selectedGame.home_score;
+        document.getElementById("sb-away-score").textContent = selectedGame.away_score;
+        bases.third = bases.second;
+        bases.second = bases.first;
+    } else if (bases.first && bases.second) {
+        bases.third = bases.second;
+        bases.second = bases.first;
+    } else if (bases.first) {
+        bases.second = bases.first;
     }
-    bases.third = bases.second;
-    bases.second = bases.first;
-    bases.first = false;
+    bases.first = null;
+}
+
+function endAtBat() {
+    setTimeout(() => clearPitchDots(), 600);
+}
+
+function getCurrentBatterId() {
+    const battingSide = inningHalf === "top" ? "away" : "home";
+    const lineup = battingSide === "home" ? homeLineup : awayLineup;
+    const idx = battingSide === "home" ? homeBatterIdx : awayBatterIdx;
+    return lineup[idx] ? lineup[idx].id : null;
+}
+
+function getCurrentPitcherId() {
+    const fieldingSide = inningHalf === "top" ? "home" : "away";
+    const lineup = fieldingSide === "home" ? homeLineup : awayLineup;
+    const entry = lineup.find(e => e.position === "P");
+    return entry ? entry.id : null;
+}
+
+function buildPitchData(outcome, hitResult, hitType) {
+    return {
+        batter_id: getCurrentBatterId(),
+        pitcher_id: getCurrentPitcherId(),
+        inning: inningNum,
+        half: inningHalf,
+        balls: balls,
+        strikes: strikes,
+        outs: outs,
+        runners: {
+            first_id: bases.first || null,
+            second_id: bases.second || null,
+            third_id: bases.third || null,
+        },
+        loc_x: pitchClickX,
+        loc_y: pitchClickY,
+        outcome: outcome,
+        hit_result: hitResult || null,
+        hit_type: hitType || null,
+        home_score: selectedGame.home_score,
+        away_score: selectedGame.away_score,
+    };
+}
+
+async function recordPitch(outcome, hitResult, hitType) {
+    const data = buildPitchData(outcome, hitResult, hitType);
+    const result = await window.pywebview.api.pitch(data);
+    if (result && result.pitches && result.pitches.length > 0) {
+        lastPitchId = result.pitches[result.pitches.length - 1].id;
+    }
 }
 
 function handlePitchOutcome(outcome) {
     markSaveDirty();
+    placePitchDot(pitchClickX, pitchClickY);
+    let atBatOver = false;
+
+    // Snapshot pre-outcome state for pitch data
+    const preOutcome = outcome;
+
     switch (outcome) {
         case "Strike":
             strikes++;
             if (strikes >= 3) {
-                // Strikeout
+                recordPitch("strikeout");
                 recordOut();
                 return;
             }
@@ -842,6 +954,7 @@ function handlePitchOutcome(outcome) {
         case "Foul Tip":
             strikes++;
             if (strikes >= 3) {
+                recordPitch("strikeout");
                 recordOut();
                 return;
             }
@@ -850,53 +963,345 @@ function handlePitchOutcome(outcome) {
         case "Ball":
             balls++;
             if (balls >= 4) {
-                // Walk — batter to first, push runners if forced
-                advanceRunners();
-                bases.first = true;
+                atBatOver = true;
+                recordPitch("walk");
+                advanceRunnersForWalk();
+                bases.first = getCurrentBatterId();
                 resetCount();
                 advanceBatter();
             }
             break;
 
         case "HBP":
-            // Hit by pitch — batter to first, push runners if forced
-            advanceRunners();
-            bases.first = true;
+            atBatOver = true;
+            recordPitch("hbp");
+            advanceRunnersForWalk();
+            bases.first = getCurrentBatterId();
             resetCount();
             advanceBatter();
             break;
 
         case "Hit":
-            // TODO: will need more detail (single/double/etc) later
-            resetCount();
-            advanceBatter();
-            break;
+            // Handled by hit submenu via handleHitOutcome
+            return;
     }
 
+    if (!atBatOver) {
+        recordPitch(outcome.toLowerCase());
+    }
+
+    if (atBatOver) endAtBat();
     updateGameState();
     renderLineup("home");
     renderLineup("away");
 }
 
-document.querySelectorAll(".pitch-menu-item").forEach(btn => {
+function getPlayerName(playerId) {
+    const battingSide = inningHalf === "top" ? "away" : "home";
+    const players = battingSide === "home" ? homePlayers : awayPlayers;
+    const p = players.find(pl => pl.id === playerId);
+    return p ? `#${p.number} ${p.first_name.charAt(0)}. ${p.last_name}` : playerId;
+}
+
+function getDefaultOutcome(startBase, hitResult) {
+    // Returns the default ending base for a runner given the hit type
+    switch (hitResult) {
+        case "Single":
+            if (startBase === "third") return "home";
+            if (startBase === "second") return "third";
+            if (startBase === "first") return "second";
+            if (startBase === "batter") return "first";
+            break;
+        case "Double":
+            if (startBase === "third") return "home";
+            if (startBase === "second") return "home";
+            if (startBase === "first") return "third";
+            if (startBase === "batter") return "second";
+            break;
+        case "Triple":
+            if (startBase === "batter") return "third";
+            return "home";
+        case "Home Run":
+            return "home";
+        case "Out":
+            if (startBase === "batter") return "out_at_first";
+            return startBase; // runners stay by default
+        case "Error":
+            if (startBase === "third") return "home";
+            if (startBase === "second") return "third";
+            if (startBase === "first") return "second";
+            if (startBase === "batter") return "first";
+            break;
+    }
+    return startBase;
+}
+
+function getOutcomeOptions(startBase) {
+    // Returns available dropdown options based on starting base
+    const options = [];
+    const baseNames = { first: "1st", second: "2nd", third: "3rd", home: "Home (score)" };
+    const allBases = ["first", "second", "third", "home"];
+    const startIdx = startBase === "batter" ? -1 : allBases.indexOf(startBase);
+
+    // Can advance to any base ahead
+    for (let i = startIdx + 1; i < allBases.length; i++) {
+        options.push({ value: allBases[i], label: baseNames[allBases[i]] });
+    }
+
+    // Out options — at any base ahead
+    for (let i = startIdx + 1; i < allBases.length; i++) {
+        options.push({ value: `out_at_${allBases[i]}`, label: `Out at ${baseNames[allBases[i]]}` });
+    }
+
+    // Stay on base (for non-batter)
+    if (startBase !== "batter") {
+        options.unshift({ value: startBase, label: `Stay at ${baseNames[startBase]}` });
+    }
+
+    return options;
+}
+
+function showRunnerResolution(hitResult, hitType) {
+    const panel = document.getElementById("runner-resolution");
+    const list = document.getElementById("runner-resolution-list");
+    list.innerHTML = "";
+
+    const batterId = getCurrentBatterId();
+    const runners = [];
+
+    // Add existing runners in order: third, second, first (top to bottom)
+    if (bases.third) runners.push({ id: bases.third, startBase: "third" });
+    if (bases.second) runners.push({ id: bases.second, startBase: "second" });
+    if (bases.first) runners.push({ id: bases.first, startBase: "first" });
+    // Add batter
+    runners.push({ id: batterId, startBase: "batter" });
+
+    runners.forEach(runner => {
+        const row = document.createElement("div");
+        row.className = "runner-resolution-row";
+
+        const nameSpan = document.createElement("span");
+        nameSpan.className = "runner-name";
+        nameSpan.textContent = getPlayerName(runner.id);
+        row.appendChild(nameSpan);
+
+        const select = document.createElement("select");
+        select.dataset.playerId = runner.id;
+        select.dataset.startBase = runner.startBase;
+
+        const options = getOutcomeOptions(runner.startBase);
+        const defaultOutcome = getDefaultOutcome(runner.startBase, hitResult);
+
+        options.forEach(opt => {
+            const option = document.createElement("option");
+            option.value = opt.value;
+            option.textContent = opt.label;
+            if (opt.value === defaultOutcome) option.selected = true;
+            select.appendChild(option);
+        });
+
+        row.appendChild(select);
+        list.appendChild(row);
+    });
+
+    panel.classList.remove("hidden");
+
+    // Store hit info for confirm handler
+    panel.dataset.hitResult = hitResult;
+    panel.dataset.hitType = hitType;
+}
+
+function handleHitOutcome(hitResult, hitType) {
+    markSaveDirty();
+    placePitchDot(pitchClickX, pitchClickY);
+
+    const outcomeMap = {
+        "Single": "single", "Double": "double", "Triple": "triple",
+        "Home Run": "home_run", "Out": "out", "Error": "error",
+    };
+    recordPitch(outcomeMap[hitResult] || hitResult.toLowerCase(), hitResult, hitType);
+
+    showRunnerResolution(hitResult, hitType);
+}
+
+document.getElementById("runner-resolution-confirm").addEventListener("click", () => {
+    const panel = document.getElementById("runner-resolution");
+    const selects = panel.querySelectorAll("select");
+    const battingSide = inningHalf === "top" ? "away" : "home";
+
+    let outsThisPlay = 0;
+
+    // Process each runner's outcome
+    selects.forEach(sel => {
+        const playerId = sel.dataset.playerId;
+        const startBase = sel.dataset.startBase;
+        const outcome = sel.value;
+
+        // Clear runner from starting base
+        if (startBase !== "batter" && bases[startBase] === playerId) {
+            bases[startBase] = null;
+        }
+
+        if (outcome.startsWith("out_at_")) {
+            // Runner is out
+            outsThisPlay++;
+            window.pywebview.api.record_baserunning({
+                pitch_id: lastPitchId,
+                baserunner_id: playerId,
+                starting_base: startBase,
+                ending_base: null,
+                out: true,
+                type: "Previous Play",
+            });
+        } else if (outcome === "home") {
+            // Runner scores
+            if (battingSide === "home") { selectedGame.home_score++; } else { selectedGame.away_score++; }
+            window.pywebview.api.record_baserunning({
+                pitch_id: lastPitchId,
+                baserunner_id: playerId,
+                starting_base: startBase,
+                ending_base: "home",
+                out: false,
+                type: "Previous Play",
+            });
+        } else {
+            // Runner advances to a base
+            bases[outcome] = playerId;
+            window.pywebview.api.record_baserunning({
+                pitch_id: lastPitchId,
+                baserunner_id: playerId,
+                starting_base: startBase,
+                ending_base: outcome,
+                out: false,
+                type: "Previous Play",
+            });
+        }
+    });
+
+    panel.classList.add("hidden");
+
+    // Update scores display
+    document.getElementById("sb-home-score").textContent = selectedGame.home_score;
+    document.getElementById("sb-away-score").textContent = selectedGame.away_score;
+
+    // Process outs
+    resetCount();
+    advanceBatter();
+    endAtBat();
+
+    for (let i = 0; i < outsThisPlay; i++) {
+        outs++;
+        if (outs >= 3) {
+            outs = 0;
+            bases = { first: null, second: null, third: null };
+            if (inningHalf === "top") {
+                inningHalf = "bottom";
+            } else {
+                inningHalf = "top";
+                inningNum++;
+            }
+            break;
+        }
+    }
+
+    updateGameState();
+    renderLineup("home");
+    renderLineup("away");
+});
+
+const hitSubmenu = document.getElementById("hit-submenu");
+
+document.querySelectorAll("#pitch-menu .pitch-menu-item").forEach(btn => {
     btn.addEventListener("click", (e) => {
         e.stopPropagation();
+        if (btn.dataset.outcome === "Hit") {
+            // Show hit submenu next to pitch menu
+            const rect = pitchMenu.getBoundingClientRect();
+            let left = rect.right + 2;
+            let top = rect.top;
+            hitSubmenu.style.left = left + "px";
+            hitSubmenu.style.top = top + "px";
+            hitSubmenu.classList.remove("hidden");
+
+            // Keep within viewport
+            const subH = hitSubmenu.offsetHeight;
+            const subW = hitSubmenu.offsetWidth;
+            if (top + subH > window.innerHeight) {
+                hitSubmenu.style.top = (window.innerHeight - subH - 4) + "px";
+            }
+            if (left + subW > window.innerWidth) {
+                hitSubmenu.style.left = (rect.left - subW - 2) + "px";
+            }
+            return;
+        }
+        hitSubmenu.classList.add("hidden");
         handlePitchOutcome(btn.dataset.outcome);
+        hidePitchMenu();
+    });
+});
+
+const hitTypeSubmenu = document.getElementById("hit-type-submenu");
+let pendingHitResult = null;
+
+function showHitTypeMenu(anchorEl) {
+    const rect = anchorEl.getBoundingClientRect();
+    let left = rect.right + 2;
+    let top = rect.top;
+    hitTypeSubmenu.style.left = left + "px";
+    hitTypeSubmenu.style.top = top + "px";
+    hitTypeSubmenu.classList.remove("hidden");
+
+    const subH = hitTypeSubmenu.offsetHeight;
+    const subW = hitTypeSubmenu.offsetWidth;
+    if (top + subH > window.innerHeight) {
+        hitTypeSubmenu.style.top = (window.innerHeight - subH - 4) + "px";
+    }
+    if (left + subW > window.innerWidth) {
+        hitTypeSubmenu.style.left = (rect.left - subW - 2) + "px";
+    }
+}
+
+document.querySelectorAll("#hit-submenu .pitch-menu-item").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        pendingHitResult = btn.dataset.hit;
+        showHitTypeMenu(hitSubmenu);
+    });
+});
+
+document.querySelectorAll("#hit-type-submenu .pitch-menu-item").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        handleHitOutcome(pendingHitResult, btn.dataset.hittype);
+        hitTypeSubmenu.classList.add("hidden");
+        hitSubmenu.classList.add("hidden");
         hidePitchMenu();
     });
 });
 
 document.getElementById("pitch-menu-cancel").addEventListener("click", (e) => {
     e.stopPropagation();
+    hitTypeSubmenu.classList.add("hidden");
+    hitSubmenu.classList.add("hidden");
     hidePitchMenu();
 });
 
-// Click on game screen to show pitch menu
+document.getElementById("hit-submenu-cancel").addEventListener("click", (e) => {
+    e.stopPropagation();
+    hitTypeSubmenu.classList.add("hidden");
+    hitSubmenu.classList.add("hidden");
+});
+
+document.getElementById("hit-type-cancel").addEventListener("click", (e) => {
+    e.stopPropagation();
+    hitTypeSubmenu.classList.add("hidden");
+});
+
+// Click anywhere to show pitch menu (when game screen is active)
 document.addEventListener("mousedown", (e) => {
     if (!pitchMenu.classList.contains("hidden")) return;
     if (gameScreen.classList.contains("hidden")) return;
-    if (!e.target.closest("#game-screen")) return;
-    if (e.target.closest("button, .lineup-panel, .modal-overlay, .score-bug")) return;
+    if (e.target.closest("button, .lineup-panel, .modal-overlay, .score-bug, .pitch-menu, .game-bases-display, #runner-menu, #runner-resolution, select, input")) return;
 
     showPitchMenu(e.clientX, e.clientY);
 });
@@ -904,7 +1309,7 @@ document.addEventListener("mousedown", (e) => {
 // --- Ball cursor on game screen ---
 
 const ballCursor = document.getElementById("ball-cursor");
-const interactiveSelectors = "button, a, input, select, textarea, .lineup-list li, .pos-btn, .modal-overlay, .modal";
+const interactiveSelectors = "button, a, input, select, textarea, .lineup-list li, .pos-btn, .modal-overlay, .modal, .game-bases-display";
 
 document.addEventListener("mousemove", (e) => {
     if (gameScreen.classList.contains("hidden")) {
@@ -934,6 +1339,211 @@ document.addEventListener("mousemove", (e) => {
 document.addEventListener("mouseleave", () => {
     ballCursor.style.display = "none";
     document.body.style.cursor = "";
+});
+
+// --- Runner Base Dragging ---
+
+const basesSvg = document.getElementById("bases-svg");
+const runnerDragDot = document.getElementById("runner-drag-dot");
+const homeBase = document.getElementById("game-base-home");
+const runnerMenu = document.getElementById("runner-menu");
+const basesDisplay = document.querySelector(".game-bases-display");
+
+const baseOrder = ["first", "second", "third", "home"];
+let draggingFrom = null;
+let isDraggingRunner = false;
+
+// SVG center coords for each base (from viewBox)
+const baseSvgCenters = {
+    first:  { x: 179, y: 110 },
+    second: { x: 115, y: 46 },
+    third:  { x: 51,  y: 110 },
+    home:   { x: 115, y: 174 },
+};
+
+function getBasePageCenter(name) {
+    const svgEl = document.getElementById("bases-svg");
+    const svgRect = svgEl.getBoundingClientRect();
+    const svgWidth = 230; // viewBox width
+    const svgHeight = 230; // viewBox height
+    const scaleX = svgRect.width / svgWidth;
+    const scaleY = svgRect.height / svgHeight;
+    const c = baseSvgCenters[name];
+    return {
+        x: svgRect.left + c.x * scaleX,
+        y: svgRect.top + c.y * scaleY,
+    };
+}
+
+function getBaseElByName(name) {
+    if (name === "first") return document.getElementById("game-base-1");
+    if (name === "second") return document.getElementById("game-base-2");
+    if (name === "third") return document.getElementById("game-base-3");
+    if (name === "home") return document.getElementById("game-base-home");
+    return null;
+}
+
+function findDropBase(x, y) {
+    const threshold = 60;
+    for (const name of baseOrder) {
+        if (name === draggingFrom) continue;
+        const c = getBasePageCenter(name);
+        const dist = Math.sqrt((x - c.x) ** 2 + (y - c.y) ** 2);
+        if (dist < threshold) return name;
+    }
+    return null;
+}
+
+function isAdvance(from, to) {
+    const fromIdx = baseOrder.indexOf(from);
+    const toIdx = baseOrder.indexOf(to);
+    return toIdx > fromIdx;
+}
+
+function showRunnerMenu(x, y, options, callback) {
+    runnerMenu.innerHTML = "";
+    options.forEach(opt => {
+        const btn = document.createElement("button");
+        btn.className = "pitch-menu-item";
+        btn.textContent = opt;
+        btn.addEventListener("click", (e) => {
+            e.stopPropagation();
+            runnerMenu.classList.add("hidden");
+            callback(opt);
+        });
+        runnerMenu.appendChild(btn);
+    });
+    const cancelBtn = document.createElement("button");
+    cancelBtn.className = "pitch-menu-cancel";
+    cancelBtn.textContent = "Cancel";
+    cancelBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        runnerMenu.classList.add("hidden");
+    });
+    runnerMenu.appendChild(cancelBtn);
+
+    runnerMenu.style.left = x + "px";
+    runnerMenu.style.top = y + "px";
+    runnerMenu.classList.remove("hidden");
+
+    // Keep in viewport
+    const menuH = runnerMenu.offsetHeight;
+    const menuW = runnerMenu.offsetWidth;
+    if (parseInt(runnerMenu.style.top) + menuH > window.innerHeight) {
+        runnerMenu.style.top = (window.innerHeight - menuH - 4) + "px";
+    }
+    if (parseInt(runnerMenu.style.left) + menuW > window.innerWidth) {
+        runnerMenu.style.left = (x - menuW) + "px";
+    }
+}
+
+function applyRunnerMove(from, to, reason) {
+    markSaveDirty();
+    const battingSide = inningHalf === "top" ? "away" : "home";
+    const runnerId = bases[from];
+
+    // Record baserunning event
+    window.pywebview.api.record_baserunning({
+        pitch_id: lastPitchId,
+        baserunner_id: runnerId,
+        starting_base: from,
+        ending_base: to,
+        out: false,
+        type: reason,
+    });
+
+    // Clear origin
+    bases[from] = null;
+
+    if (to === "home") {
+        // Runner scores
+        if (battingSide === "home") { selectedGame.home_score++; } else { selectedGame.away_score++; }
+        document.getElementById("sb-home-score").textContent = selectedGame.home_score;
+        document.getElementById("sb-away-score").textContent = selectedGame.away_score;
+    } else {
+        bases[to] = runnerId;
+    }
+
+    updateGameState();
+    renderLineup("home");
+    renderLineup("away");
+}
+
+function applyRunnerOut(from, reason) {
+    markSaveDirty();
+    const runnerId = bases[from];
+
+    // Record baserunning event
+    window.pywebview.api.record_baserunning({
+        pitch_id: lastPitchId,
+        baserunner_id: runnerId,
+        starting_base: from,
+        ending_base: null,
+        out: true,
+        type: reason,
+    });
+
+    bases[from] = null;
+    recordOut();
+}
+
+// Mouse handlers for base dragging
+basesSvg.addEventListener("mousedown", (e) => {
+    const baseEl = e.target.closest(".base-large.active");
+    if (!baseEl) return;
+    e.preventDefault();
+    e.stopPropagation();
+
+    draggingFrom = baseEl.dataset.base;
+    isDraggingRunner = true;
+
+
+    // Show drag dot
+    const displayRect = basesDisplay.getBoundingClientRect();
+    runnerDragDot.style.display = "block";
+    runnerDragDot.style.left = (e.clientX - displayRect.left) + "px";
+    runnerDragDot.style.top = (e.clientY - displayRect.top) + "px";
+});
+
+document.addEventListener("mousemove", (e) => {
+    if (!isDraggingRunner) return;
+    const displayRect = basesDisplay.getBoundingClientRect();
+    runnerDragDot.style.left = (e.clientX - displayRect.left) + "px";
+    runnerDragDot.style.top = (e.clientY - displayRect.top) + "px";
+
+    // Highlight drop target
+    document.querySelectorAll(".base-large, .base-home").forEach(el => el.classList.remove("drop-target"));
+    const target = findDropBase(e.clientX, e.clientY);
+    if (target) {
+        const el = getBaseElByName(target);
+        if (el) el.classList.add("drop-target");
+    }
+});
+
+document.addEventListener("mouseup", (e) => {
+    if (!isDraggingRunner) return;
+    isDraggingRunner = false;
+    runnerDragDot.style.display = "none";
+    document.querySelectorAll(".base-large, .base-home").forEach(el => el.classList.remove("drop-target"));
+
+    const dropBase = findDropBase(e.clientX, e.clientY);
+    const from = draggingFrom;
+    draggingFrom = null;
+
+    if (dropBase && isAdvance(from, dropBase)) {
+        // Advance — show advance options
+        showRunnerMenu(e.clientX + 14, e.clientY - 14,
+            ["Previous Play", "Stolen Base", "Wild Pitch", "Passed Ball"],
+            (reason) => applyRunnerMove(from, dropBase, reason)
+        );
+    } else if (!dropBase || !isAdvance(from, dropBase)) {
+        // Dropped in no-man's land or on same/earlier base — out options
+        if (dropBase === from) return; // dropped back on same base, cancel
+        showRunnerMenu(e.clientX + 14, e.clientY - 14,
+            ["Caught Stealing", "Picked Off", "Previous Play"],
+            (reason) => applyRunnerOut(from, reason)
+        );
+    }
 });
 
 // --- Init ---
