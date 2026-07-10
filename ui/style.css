@@ -1373,3 +1373,64 @@ input[type="text"] {
     display: block;
     margin: 0 auto 12px;
 }
+
+/* --- Season summary --- */
+
+.stat-tiles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-bottom: 16px;
+}
+
+.tile {
+    flex: 1 1 120px;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    padding: 12px 14px;
+}
+
+.tile-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: #6b7280;
+    margin-bottom: 4px;
+}
+
+.tile-value {
+    font-size: 22px;
+    font-weight: 700;
+    color: #111827;
+    font-variant-numeric: tabular-nums;
+}
+
+.game-log-wrap {
+    margin-bottom: 8px;
+}
+
+.result-w { color: #0ca30c; font-weight: 700; }
+.result-l { color: #d03b3b; font-weight: 700; }
+
+/* --- Pitch type selector (game screen) --- */
+
+.score-bug-pitchtype {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    margin-top: 6px;
+    padding-bottom: 8px;
+    color: #374151;
+    font-size: 12px;
+}
+
+.score-bug-pitchtype select {
+    background: #fff;
+    color: #111;
+    border: 1px solid #cbd5e1;
+    border-radius: 5px;
+    padding: 2px 6px;
+    font-size: 12px;
+}

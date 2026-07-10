@@ -112,7 +112,25 @@
                 <span class="controls-spacer"></span>
                 <button id="export-csv-btn" class="btn-small">Export CSV</button>
                 <button id="export-html-btn" class="btn-small">Export HTML</button>
+                <button id="export-game-btn" class="btn-small">Game summary</button>
+                <button id="export-season-btn" class="btn-small">Season CSV</button>
             </div>
+
+            <h2 class="analysis-section-title">Season</h2>
+            <div class="stat-tiles">
+                <div class="tile"><div class="tile-label">Record</div><div class="tile-value" id="season-record">0-0</div></div>
+                <div class="tile"><div class="tile-label">Runs for</div><div class="tile-value" id="season-rf">0</div></div>
+                <div class="tile"><div class="tile-label">Runs against</div><div class="tile-value" id="season-ra">0</div></div>
+                <div class="tile"><div class="tile-label">Run diff</div><div class="tile-value" id="season-diff">0</div></div>
+                <div class="tile"><div class="tile-label">Games</div><div class="tile-value" id="season-gp">0</div></div>
+            </div>
+            <div class="stats-table-wrap game-log-wrap">
+                <table class="stats-table">
+                    <thead><tr><th class="sticky-col">Game</th><th>Result</th><th>Score</th><th>Status</th></tr></thead>
+                    <tbody id="game-log-body"></tbody>
+                </table>
+            </div>
+            <p id="season-empty" class="analysis-empty hidden">No games yet.</p>
 
             <h2 class="analysis-section-title">Batting</h2>
             <div class="stats-table-wrap">
@@ -130,6 +148,8 @@
                             <th title="Walks">BB</th>
                             <th title="Hit By Pitch">HBP</th>
                             <th title="Strikeouts">SO</th>
+                            <th title="Sacrifice Flies">SF</th>
+                            <th title="Sacrifice Hits (Bunts)">SH</th>
                             <th title="Total Bases">TB</th>
                             <th title="Batting Average">AVG</th>
                             <th title="On-Base Percentage">OBP</th>
@@ -361,6 +381,17 @@
                     <span id="sb-batter-name">--</span>
                 </div>
             </div>
+            <div class="score-bug-pitchtype">
+                <label class="info-label" for="pitch-type-select">Pitch</label>
+                <select id="pitch-type-select">
+                    <option value="">—</option>
+                    <option value="Fastball">Fastball</option>
+                    <option value="Curveball">Curveball</option>
+                    <option value="Changeup">Changeup</option>
+                    <option value="Slider">Slider</option>
+                    <option value="Other">Other</option>
+                </select>
+            </div>
         </div>
         </div>
         <div class="game-body">
@@ -470,6 +501,9 @@
         <button class="pitch-menu-item" data-hit="Home Run">Home Run</button>
         <button class="pitch-menu-item" data-hit="Out">Out</button>
         <button class="pitch-menu-item" data-hit="Error">Error</button>
+        <button class="pitch-menu-item" data-hit="Fielder's Choice">Fielder's Choice</button>
+        <button class="pitch-menu-item" data-hit="Sac Fly">Sac Fly</button>
+        <button class="pitch-menu-item" data-hit="Sac Bunt">Sac Bunt</button>
         <button class="pitch-menu-cancel" id="hit-submenu-cancel">Cancel</button>
     </div>
 

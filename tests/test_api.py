@@ -174,6 +174,38 @@ def test_export_csv_and_html_write_files(api):
     assert "Sluggers" in body
 
 
+def test_game_log_and_season_summary(api):
+    g1 = api.create_game("Rivals", "home", "Field 1")
+    api.update_score(6, 2)
+    api.end_game()  # completed win 6-2
+
+    summary = api.get_season_summary()
+    assert summary["record"]["wins"] == 1
+    assert summary["record"]["runs_for"] == 6
+    assert len(summary["games"]) == 1
+    assert summary["games"][0]["result"] == "W"
+
+
+def test_export_game_summary_and_season_csv(api):
+    tid = _my_team_id(api)
+    p = api.add_player(tid, "1", "Al", "Batter")
+    g = api.create_game("Rivals", "home", "Field 1")
+    api.pitch({"batter_id": p["id"], "outcome": "single", "hit_result": "Single"})
+    api.update_score(4, 1)
+    api.save_game()
+
+    gs = api.export_game_summary(g["id"])
+    assert "path" in gs and os.path.exists(gs["path"])
+    with open(gs["path"]) as f:
+        assert "Sluggers vs Rivals" in f.read()
+
+    sc = api.export_season_csv()
+    assert "path" in sc and os.path.exists(sc["path"])
+    assert sc["path"].endswith(".csv")
+
+    assert "error" in api.export_game_summary(None)
+
+
 def test_error_paths_without_selection(tmp_path):
     a = app.Api(str(tmp_path))
     assert "error" in a.get_batting_stats()
@@ -182,3 +214,6 @@ def test_error_paths_without_selection(tmp_path):
     assert "error" in a.get_pitch_events()
     assert "error" in a.export_batting_csv()
     assert "error" in a.export_html_summary()
+    assert "error" in a.get_game_log()
+    assert "error" in a.get_season_summary()
+    assert "error" in a.export_season_csv()

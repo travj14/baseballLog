@@ -17,6 +17,9 @@ PA_OUTCOMES = {
     "home_run",
     "out",
     "error",
+    "sac_fly",
+    "sac_bunt",
+    "fielders_choice",
 }
 
 HIT_OUTCOMES = {"single", "double", "triple", "home_run"}
@@ -49,6 +52,8 @@ def _blank_line():
         "BB": 0,
         "HBP": 0,
         "SO": 0,
+        "SF": 0,   # sacrifice flies
+        "SH": 0,   # sacrifice hits (bunts)
     }
 
 
@@ -59,9 +64,11 @@ def _finalize(line):
     bb = line["BB"]
     hbp = line["HBP"]
 
+    sf = line["SF"]
     total_bases = line["1B"] + 2 * line["2B"] + 3 * line["3B"] + 4 * line["HR"]
     on_base_num = h + bb + hbp
-    on_base_den = ab + bb + hbp  # no sac flies tracked yet
+    # Official OBP/wOBA denominator: AB + BB + HBP + SF (sac bunts excluded).
+    on_base_den = ab + bb + hbp + sf
 
     woba_num = (
         WOBA_WEIGHTS["walk"] * bb
@@ -87,12 +94,18 @@ def _apply_outcome(line, outcome):
         return
     line["PA"] += 1
 
-    # Walk and HBP are not at-bats; everything else terminal is.
+    # Walk, HBP, and sacrifices are not at-bats; everything else terminal is.
     if outcome == "walk":
         line["BB"] += 1
         return
     if outcome == "hbp":
         line["HBP"] += 1
+        return
+    if outcome == "sac_fly":
+        line["SF"] += 1
+        return
+    if outcome == "sac_bunt":
+        line["SH"] += 1
         return
 
     line["AB"] += 1
@@ -109,7 +122,7 @@ def _apply_outcome(line, outcome):
             line["3B"] += 1
         elif outcome == "home_run":
             line["HR"] += 1
-    # "out" and "error" count as an at-bat with no other consequence.
+    # "out", "error", and "fielders_choice" are at-bats with no hit.
 
 
 def compute_batting_stats(games, roster_teams, game_id=None, player_ids=None):
@@ -173,3 +186,60 @@ def compute_batting_stats(games, roster_teams, game_id=None, player_ids=None):
 
     result.sort(key=lambda r: (-r["PA"], r["name"]))
     return result
+
+
+def compute_game_log(games, roster_teams):
+    """Per-game results from my team's perspective (one row per game)."""
+    name_map = {t["id"]: t.get("team_name", "") for t in roster_teams}
+
+    log = []
+    for g in games:
+        home_away = g.get("home_away", "home")
+        hs = g.get("home_score", 0)
+        as_ = g.get("away_score", 0)
+        if home_away == "home":
+            my_score, opp_score = hs, as_
+        else:
+            my_score, opp_score = as_, hs
+
+        status = g.get("status", "upcoming")
+        result = None
+        if status == "complete":
+            result = "W" if my_score > opp_score else ("L" if my_score < opp_score else "T")
+
+        log.append({
+            "game_id": g.get("id"),
+            "opponent": name_map.get(g.get("opponent_id"), g.get("opponent_id")),
+            "home_away": home_away,
+            "my_score": my_score,
+            "opp_score": opp_score,
+            "status": status,
+            "result": result,
+        })
+    return log
+
+
+def compute_season_record(game_log):
+    """Aggregate a game log into a season record and run totals."""
+    wins = losses = ties = games_played = 0
+    runs_for = runs_against = 0
+    for row in game_log:
+        runs_for += row["my_score"]
+        runs_against += row["opp_score"]
+        if row["status"] == "complete":
+            games_played += 1
+            if row["result"] == "W":
+                wins += 1
+            elif row["result"] == "L":
+                losses += 1
+            else:
+                ties += 1
+    return {
+        "wins": wins,
+        "losses": losses,
+        "ties": ties,
+        "games_played": games_played,
+        "runs_for": runs_for,
+        "runs_against": runs_against,
+        "run_diff": runs_for - runs_against,
+    }

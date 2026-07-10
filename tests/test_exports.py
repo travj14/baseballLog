@@ -63,3 +63,41 @@ def test_empty_rows():
     assert "Player" in exports.batting_csv([])
     doc = exports.html_summary("Sluggers", [], "2026-07-10 12:00")
     assert "Sluggers" in doc
+
+
+def test_game_summary_html():
+    doc = exports.game_summary_html(
+        "Sluggers", "Rivals", "home", 5, 3, "W", _rows(), "2026-07-10 12:00")
+    assert doc.strip().startswith("<!DOCTYPE html>")
+    assert "Sluggers vs Rivals" in doc
+    assert "5 &ndash; 3" in doc
+    assert "Win" in doc
+    assert "@media print" in doc
+    assert "Al Batter" in doc
+
+
+def test_game_summary_away_matchup():
+    doc = exports.game_summary_html(
+        "Sluggers", "Rivals", "away", 2, 7, "L", _rows(), "2026-07-10 12:00")
+    assert "Sluggers @ Rivals" in doc
+    assert "Loss" in doc
+
+
+def test_season_csv():
+    log = [
+        {"game_id": "g1", "opponent": "Rivals", "home_away": "home",
+         "my_score": 5, "opp_score": 3, "result": "W", "status": "complete"},
+        {"game_id": "g2", "opponent": "Rivals", "home_away": "away",
+         "my_score": 2, "opp_score": 7, "result": "L", "status": "complete"},
+    ]
+    text = exports.season_csv(log)
+    parsed = list(csv.reader(io.StringIO(text)))
+    assert parsed[0] == ["Game", "Opponent", "Home/Away", "Result", "Runs For", "Runs Against", "Status"]
+    assert parsed[1][3] == "W"
+    assert parsed[2][2] == "Away"
+
+
+def test_sf_sh_columns_present_in_csv():
+    text = exports.batting_csv(_rows())
+    header = text.splitlines()[0]
+    assert "SF" in header and "SH" in header

@@ -224,7 +224,7 @@ const battingStatsFoot = document.getElementById("batting-stats-foot");
 const analysisEmpty = document.getElementById("analysis-empty");
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-const COUNTING_COLS = ["PA", "AB", "H", "1B", "2B", "3B", "HR", "BB", "HBP", "SO", "TB"];
+const COUNTING_COLS = ["PA", "AB", "H", "1B", "2B", "3B", "HR", "BB", "HBP", "SO", "SF", "SH", "TB"];
 const RATE_COLS = ["AVG", "OBP", "SLG", "OPS", "wOBA"];
 
 // Baseball convention: rate stats below 1 drop the leading zero (".333").
@@ -265,8 +265,8 @@ function computeTotals(rows) {
     COUNTING_COLS.forEach(col => { totals[col] = 0; });
     rows.forEach(r => COUNTING_COLS.forEach(col => { totals[col] += r[col] || 0; }));
 
-    const ab = totals.AB, h = totals.H, bb = totals.BB, hbp = totals.HBP;
-    const onBaseDen = ab + bb + hbp;
+    const ab = totals.AB, h = totals.H, bb = totals.BB, hbp = totals.HBP, sf = totals.SF;
+    const onBaseDen = ab + bb + hbp + sf;
     totals.AVG = ab ? h / ab : 0;
     totals.OBP = onBaseDen ? (h + bb + hbp) / onBaseDen : 0;
     totals.SLG = ab ? totals.TB / ab : 0;
@@ -470,6 +470,51 @@ function populatePlayerFilter(allRows) {
         [...analysisPlayerFilter.options].some(o => o.value === desired) ? desired : "";
 }
 
+async function loadSeason() {
+    const summary = await window.pywebview.api.get_season_summary();
+    const body = document.getElementById("game-log-body");
+    body.innerHTML = "";
+    if (!summary || summary.error) return;
+
+    const rec = summary.record;
+    const recordText = rec.ties
+        ? `${rec.wins}-${rec.losses}-${rec.ties}` : `${rec.wins}-${rec.losses}`;
+    document.getElementById("season-record").textContent = recordText;
+    document.getElementById("season-rf").textContent = rec.runs_for;
+    document.getElementById("season-ra").textContent = rec.runs_against;
+    const diff = rec.run_diff;
+    document.getElementById("season-diff").textContent = diff > 0 ? `+${diff}` : `${diff}`;
+    document.getElementById("season-gp").textContent = rec.games_played;
+
+    const games = summary.games || [];
+    document.getElementById("season-empty").classList.toggle("hidden", games.length > 0);
+
+    games.forEach(g => {
+        const tr = document.createElement("tr");
+        const prefix = g.home_away === "away" ? "@ " : "vs ";
+        const nameTd = document.createElement("td");
+        nameTd.className = "sticky-col";
+        nameTd.textContent = `${prefix}${g.opponent}`;
+        tr.appendChild(nameTd);
+
+        const resTd = document.createElement("td");
+        resTd.textContent = g.result || "—";
+        if (g.result === "W") resTd.className = "result-w";
+        else if (g.result === "L") resTd.className = "result-l";
+        tr.appendChild(resTd);
+
+        const scoreTd = document.createElement("td");
+        scoreTd.textContent = `${g.my_score}-${g.opp_score}`;
+        tr.appendChild(scoreTd);
+
+        const statusTd = document.createElement("td");
+        statusTd.textContent = g.status;
+        tr.appendChild(statusTd);
+
+        body.appendChild(tr);
+    });
+}
+
 async function loadAnalysis() {
     const gameId = analysisGameFilter.value || null;
     const scope = analysisScopeFilter.value || "my_team";
@@ -520,6 +565,7 @@ async function populateGameFilter() {
 document.getElementById("analyze-btn").addEventListener("click", async () => {
     showScreen(analysisScreen);
     await populateGameFilter();
+    await loadSeason();
     await loadAnalysis();
 });
 
@@ -542,6 +588,19 @@ document.getElementById("export-csv-btn").addEventListener("click", () =>
     runExport((g, s) => window.pywebview.api.export_batting_csv(g, s)));
 document.getElementById("export-html-btn").addEventListener("click", () =>
     runExport((g, s) => window.pywebview.api.export_html_summary(g, s)));
+
+document.getElementById("export-game-btn").addEventListener("click", async () => {
+    const gameId = analysisGameFilter.value || null;
+    if (!gameId) { showToast("Pick a specific game to export its summary."); return; }
+    const result = await window.pywebview.api.export_game_summary(gameId);
+    if (result && result.path) showToast(`Exported to ${result.path}`);
+    else if (result && result.error) showToast(result.error);
+});
+document.getElementById("export-season-btn").addEventListener("click", async () => {
+    const result = await window.pywebview.api.export_season_csv();
+    if (result && result.path) showToast(`Exported to ${result.path}`);
+    else if (result && result.error) showToast(result.error);
+});
 
 document.getElementById("back-dashboard-from-analysis-btn").addEventListener("click", () => {
     showScreen(dashboardScreen);
@@ -722,6 +781,8 @@ startGameBtn.addEventListener("click", async () => {
     lastPitchId = pitchesArr.length ? pitchesArr[pitchesArr.length - 1].id : null;
     undoStack = [];
     updateUndoButton();
+    currentPitchType = "";
+    document.getElementById("pitch-type-select").value = "";
 
     updateGameState();
     markSaveClean();
@@ -787,6 +848,9 @@ function tryLeaveGame(action) {
 saveGameBtn.addEventListener("click", () => saveCurrentGame());
 
 document.getElementById("undo-btn").addEventListener("click", () => undoLastEvent());
+
+const pitchTypeSelect = document.getElementById("pitch-type-select");
+pitchTypeSelect.addEventListener("change", () => { currentPitchType = pitchTypeSelect.value; });
 
 backDashboardBtn.addEventListener("click", () => {
     tryLeaveGame(leaveGame);
@@ -942,6 +1006,7 @@ let recordedPitches = 0;      // mirrors backend game.pitches.length
 let recordedBaserunning = 0;  // mirrors backend game.baserunning.length
 let toastTimer = null;
 let battedBallLoc = null;     // {x, y} normalized field location for a hit, or null
+let currentPitchType = "";    // sticky pitch type applied to each pitch until changed
 
 function lineupIds(side) {
     return (side === "home" ? homeLineup : awayLineup).map(e => e.id);
@@ -1489,6 +1554,7 @@ function buildPitchData(outcome, hitResult, hitType, strikeType) {
         zone_y: zc.zy,
         in_zone: isPitchInZone(pitchClickX, pitchClickY),
         outcome: outcome,
+        pitch_type: currentPitchType || null,
         hit_result: hitResult || null,
         hit_type: hitType || null,
         strike_type: strikeType || null,
@@ -1622,6 +1688,20 @@ function getDefaultOutcome(startBase, hitResult) {
             if (startBase === "first") return "second";
             if (startBase === "batter") return "first";
             break;
+        case "Fielder's Choice":
+            // Batter reaches; the scorer marks which runner was put out.
+            if (startBase === "batter") return "first";
+            return startBase;
+        case "Sac Fly":
+            if (startBase === "batter") return "out_at_first";  // batter out
+            if (startBase === "third") return "home";           // runner tags and scores
+            return startBase;
+        case "Sac Bunt":
+            if (startBase === "batter") return "out_at_first";  // batter out
+            if (startBase === "third") return "home";
+            if (startBase === "second") return "third";
+            if (startBase === "first") return "second";
+            break;
     }
     return startBase;
 }
@@ -1709,6 +1789,7 @@ function handleHitOutcome(hitResult, hitType) {
     const outcomeMap = {
         "Single": "single", "Double": "double", "Triple": "triple",
         "Home Run": "home_run", "Out": "out", "Error": "error",
+        "Fielder's Choice": "fielders_choice", "Sac Fly": "sac_fly", "Sac Bunt": "sac_bunt",
     };
     recordPitch(outcomeMap[hitResult] || hitResult.toLowerCase(), hitResult, hitType);
 

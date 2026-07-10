@@ -455,6 +455,20 @@ class Api:
                 })
         return events
 
+    def get_game_log(self):
+        if not self.current_team:
+            return {"error": "No team selected."}
+        return stats.compute_game_log(self._load_games(), self._load_roster())
+
+    def get_season_summary(self):
+        if not self.current_team:
+            return {"error": "No team selected."}
+        game_log = stats.compute_game_log(self._load_games(), self._load_roster())
+        return {
+            "record": stats.compute_season_record(game_log),
+            "games": game_log,
+        }
+
     # --- Export methods ---
 
     def _exports_dir(self):
@@ -500,6 +514,46 @@ class Api:
         stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         path = os.path.join(self._exports_dir(), f"batting_summary_{stamp}.html")
         with open(path, "w") as f:
+            f.write(content)
+        return {"path": path}
+
+    def export_game_summary(self, game_id):
+        if not self.current_team:
+            return {"error": "No team selected."}
+        if not game_id:
+            return {"error": "Select a game first."}
+
+        roster_teams = self._load_roster()
+        game_log = stats.compute_game_log(self._load_games(), roster_teams)
+        meta = next((g for g in game_log if g["game_id"] == game_id), None)
+        if not meta:
+            return {"error": "Game not found."}
+
+        rows = self.get_batting_stats(game_id=game_id, scope="my_team")
+        content = exports.game_summary_html(
+            self._my_team_name(roster_teams),
+            meta["opponent"],
+            meta["home_away"],
+            meta["my_score"],
+            meta["opp_score"],
+            meta["result"],
+            rows,
+            datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+        )
+        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = os.path.join(self._exports_dir(), f"game_{game_id}_summary_{stamp}.html")
+        with open(path, "w") as f:
+            f.write(content)
+        return {"path": path}
+
+    def export_season_csv(self):
+        if not self.current_team:
+            return {"error": "No team selected."}
+        game_log = stats.compute_game_log(self._load_games(), self._load_roster())
+        content = exports.season_csv(game_log)
+        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = os.path.join(self._exports_dir(), f"season_{stamp}.csv")
+        with open(path, "w", newline="") as f:
             f.write(content)
         return {"path": path}
 

@@ -144,3 +144,56 @@ def test_woba_uses_weights():
     r = stats.compute_batting_stats(games, roster)[0]
     # Single HR: wOBA = w_hr / (AB) since denom = AB+BB+HBP = 1
     assert r["wOBA"] == round(stats.WOBA_WEIGHTS["home_run"] / 1, 3)
+
+
+def test_sacrifices_and_fielders_choice():
+    roster = _roster([_player("p1", "Al", "Batter")])
+    games = [{"id": "g1", "pitches": [
+        _pitch("p1", "single"),
+        _pitch("p1", "sac_fly"),
+        _pitch("p1", "sac_bunt"),
+        _pitch("p1", "fielders_choice"),
+    ]}]
+    r = stats.compute_batting_stats(games, roster)[0]
+
+    assert r["PA"] == 4
+    # SF, SH are not at-bats; FC and the single are.
+    assert r["AB"] == 2
+    assert r["SF"] == 1
+    assert r["SH"] == 1
+    assert r["H"] == 1
+    assert r["AVG"] == round(1 / 2, 3)
+    # OBP denom = AB + BB + HBP + SF = 2 + 0 + 0 + 1 = 3; on base = 1 hit.
+    assert r["OBP"] == round(1 / 3, 3)
+
+
+def test_sac_bunt_excluded_from_obp_denominator():
+    roster = _roster([_player("p1", "Al", "Batter")])
+    # One single, one sac bunt: OBP = 1 / (AB=1 + SF=0) = 1.000 (SH excluded).
+    games = [{"id": "g1", "pitches": [_pitch("p1", "single"), _pitch("p1", "sac_bunt")]}]
+    r = stats.compute_batting_stats(games, roster)[0]
+    assert r["OBP"] == 1.0
+
+
+def test_game_log_and_season_record():
+    roster = [{"id": "tm_2", "team_name": "Rivals", "my_team": False, "roster": []}]
+    games = [
+        {"id": "g1", "opponent_id": "tm_2", "home_away": "home",
+         "home_score": 5, "away_score": 3, "status": "complete"},
+        {"id": "g2", "opponent_id": "tm_2", "home_away": "away",
+         "home_score": 7, "away_score": 2, "status": "complete"},  # my team away, lost 2-7
+        {"id": "g3", "opponent_id": "tm_2", "home_away": "home",
+         "home_score": 0, "away_score": 0, "status": "upcoming"},
+    ]
+    log = stats.compute_game_log(games, roster)
+    assert log[0]["result"] == "W" and log[0]["my_score"] == 5
+    assert log[1]["result"] == "L" and log[1]["my_score"] == 2
+    assert log[2]["result"] is None  # not complete
+
+    rec = stats.compute_season_record(log)
+    assert rec["wins"] == 1
+    assert rec["losses"] == 1
+    assert rec["games_played"] == 2
+    assert rec["runs_for"] == 5 + 2
+    assert rec["runs_against"] == 3 + 7
+    assert rec["run_diff"] == (5 + 2) - (3 + 7)
