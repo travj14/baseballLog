@@ -3,6 +3,11 @@ import sys
 import json
 import webview
 
+import stats
+import migrations
+import exports
+import datetime
+
 
 class Api:
     """Bridge between the HTML frontend and local filesystem."""
@@ -194,7 +199,8 @@ class Api:
         if not os.path.exists(path):
             return []
         with open(path, "r") as f:
-            return json.load(f)
+            games = json.load(f)
+        return migrations.migrate_games(games)
 
     def _save_games(self, games):
         path = self._get_games_path()
@@ -234,6 +240,7 @@ class Api:
         self.pitch_num = 0
         self.current_game = {
             "id": game_id,
+            "version": migrations.SCHEMA_VERSION,
             "opponent_id": opponent_id,
             "home_away": home_away,
             "location": location,
@@ -244,6 +251,7 @@ class Api:
             "away_lineup": [],
             "pitches": [],
             "baserunning": [],
+            "pitch_counts": {},
         }
 
         games.append(self.current_game)
@@ -282,6 +290,14 @@ class Api:
         pitch_data["id"] = pitch_id
         self.current_game["pitches"].append(pitch_data)
 
+        # Update pitcher pitch count
+        if "pitch_counts" not in self.current_game:
+            self.current_game["pitch_counts"] = {}
+        pitcher_id = pitch_data.get("pitcher_id")
+        if pitcher_id:
+            self.current_game["pitch_counts"][pitcher_id] = \
+                self.current_game["pitch_counts"].get(pitcher_id, 0) + 1
+
         if "home_score" in pitch_data:
             self.current_game["home_score"] = pitch_data["home_score"]
         if "away_score" in pitch_data:
@@ -295,6 +311,37 @@ class Api:
         if "baserunning" not in self.current_game:
             self.current_game["baserunning"] = []
         self.current_game["baserunning"].append(entry)
+        return self.current_game
+
+    def undo_last_event(self, pitches_len, baserunning_len):
+        """Truncate the pitch and baserunning event logs back to the given
+        lengths and recompute pitch counts from what remains.
+
+        The frontend owns live game state (count/outs/bases/score) and restores
+        it from its own undo snapshot; this keeps the persisted event history in
+        sync with that restore.
+        """
+        if not self.current_game:
+            return {"error": "No active game."}
+
+        pitches = self.current_game.get("pitches", [])
+        baserunning = self.current_game.get("baserunning", [])
+
+        pitches_len = max(0, min(pitches_len, len(pitches)))
+        baserunning_len = max(0, min(baserunning_len, len(baserunning)))
+
+        self.current_game["pitches"] = pitches[:pitches_len]
+        self.current_game["baserunning"] = baserunning[:baserunning_len]
+        self.pitch_num = pitches_len
+
+        # Recompute pitch counts from the surviving pitches so they never drift.
+        counts = {}
+        for p in self.current_game["pitches"]:
+            pid = p.get("pitcher_id")
+            if pid:
+                counts[pid] = counts.get(pid, 0) + 1
+        self.current_game["pitch_counts"] = counts
+
         return self.current_game
 
     def update_game_state(self, state):
@@ -324,6 +371,137 @@ class Api:
                 return self.current_game
 
         return {"error": "Game not found in file."}
+
+    # --- Analysis methods ---
+
+    def get_batting_stats(self, game_id=None, scope="my_team"):
+        """Return aggregated batting stat lines.
+
+        game_id: limit to a single game, or None for all games.
+        scope:   "my_team" (default) restricts to the user's own roster,
+                 "all" includes every batter found (my team and opponents).
+        """
+        if not self.current_team:
+            return {"error": "No team selected."}
+
+        roster_teams = self._load_roster()
+        games = self._load_games()
+
+        player_ids = None
+        if scope == "my_team":
+            player_ids = [
+                p["id"]
+                for team in roster_teams
+                if team.get("my_team")
+                for p in team.get("roster", [])
+            ]
+
+        return stats.compute_batting_stats(
+            games, roster_teams, game_id=game_id, player_ids=player_ids
+        )
+
+    def _my_team_player_ids(self, roster_teams):
+        return [
+            p["id"]
+            for team in roster_teams
+            if team.get("my_team")
+            for p in team.get("roster", [])
+        ]
+
+    def get_pitch_events(self, game_id=None, scope="my_team", player_id=None):
+        """Return per-pitch events for charting (pitch-location and spray maps).
+
+        Only pitches that carry normalized coordinates are useful to plot, but
+        all matching pitches are returned so the frontend can report coverage.
+        """
+        if not self.current_team:
+            return {"error": "No team selected."}
+
+        roster_teams = self._load_roster()
+        games = self._load_games()
+
+        name_map = {}
+        for team in roster_teams:
+            for p in team.get("roster", []):
+                name_map[p["id"]] = f"{p.get('first_name', '')} {p.get('last_name', '')}".strip()
+
+        allowed = None
+        if scope == "my_team":
+            allowed = set(self._my_team_player_ids(roster_teams))
+
+        events = []
+        for game in games:
+            if game_id is not None and game.get("id") != game_id:
+                continue
+            for pitch in game.get("pitches", []):
+                batter_id = pitch.get("batter_id")
+                if allowed is not None and batter_id not in allowed:
+                    continue
+                if player_id and batter_id != player_id:
+                    continue
+                events.append({
+                    "batter_id": batter_id,
+                    "batter_name": name_map.get(batter_id, batter_id or ""),
+                    "outcome": pitch.get("outcome"),
+                    "hit_result": pitch.get("hit_result"),
+                    "hit_type": pitch.get("hit_type"),
+                    "in_zone": pitch.get("in_zone"),
+                    "zone_x": pitch.get("zone_x"),
+                    "zone_y": pitch.get("zone_y"),
+                    "batted_ball_x": pitch.get("batted_ball_x"),
+                    "batted_ball_y": pitch.get("batted_ball_y"),
+                    "inning": pitch.get("inning"),
+                    "half": pitch.get("half"),
+                })
+        return events
+
+    # --- Export methods ---
+
+    def _exports_dir(self):
+        path = os.path.join(self.data_dir, self.current_team, "exports")
+        os.makedirs(path, exist_ok=True)
+        return path
+
+    def _my_team_name(self, roster_teams):
+        for team in roster_teams:
+            if team.get("my_team"):
+                return team.get("team_name", "Team")
+        return "Team"
+
+    def export_batting_csv(self, game_id=None, scope="my_team"):
+        if not self.current_team:
+            return {"error": "No team selected."}
+        rows = self.get_batting_stats(game_id=game_id, scope=scope)
+        if isinstance(rows, dict) and "error" in rows:
+            return rows
+
+        content = exports.batting_csv(rows)
+        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = os.path.join(self._exports_dir(), f"batting_{stamp}.csv")
+        with open(path, "w", newline="") as f:
+            f.write(content)
+        return {"path": path}
+
+    def export_html_summary(self, game_id=None, scope="my_team"):
+        if not self.current_team:
+            return {"error": "No team selected."}
+        roster_teams = self._load_roster()
+        rows = self.get_batting_stats(game_id=game_id, scope=scope)
+        if isinstance(rows, dict) and "error" in rows:
+            return rows
+
+        scope_label = "All games" if not game_id else f"Game {game_id}"
+        content = exports.html_summary(
+            self._my_team_name(roster_teams),
+            rows,
+            datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+            scope_label=scope_label,
+        )
+        stamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        path = os.path.join(self._exports_dir(), f"batting_summary_{stamp}.html")
+        with open(path, "w") as f:
+            f.write(content)
+        return {"path": path}
 
     def end_game(self):
         if not self.current_game:

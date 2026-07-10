@@ -1,3 +1,24 @@
+// --- Autosave ---
+let autosaveEnabled = localStorage.getItem("autosave") === "true";
+const autosaveToggle = document.getElementById("autosave-toggle");
+
+function updateAutosaveButton() {
+    if (autosaveEnabled) {
+        autosaveToggle.textContent = "Autosave: ON";
+        autosaveToggle.className = "autosave-btn on";
+    } else {
+        autosaveToggle.textContent = "Autosave: OFF";
+        autosaveToggle.className = "autosave-btn off";
+    }
+}
+updateAutosaveButton();
+
+autosaveToggle.addEventListener("click", () => {
+    autosaveEnabled = !autosaveEnabled;
+    localStorage.setItem("autosave", autosaveEnabled);
+    updateAutosaveButton();
+});
+
 const homeScreen = document.getElementById("home");
 const createScreen = document.getElementById("create-team");
 const dashboardScreen = document.getElementById("team-dashboard");
@@ -61,7 +82,10 @@ function addGameCard(game) {
         card.addEventListener("click", async () => {
             const result = await window.pywebview.api.continue_game(game.id);
             if (result.error) return;
-            selectedGame = game;
+            // Keep the full game (pitches/baserunning/pitch_counts) from the
+            // backend, but carry over the resolved opponent name for display.
+            result.opponent = game.opponent;
+            selectedGame = result;
             document.getElementById("enter-game-title").textContent =
                 `${prefix}${game.opponent} (${game.home_score} - ${game.away_score})`;
             document.getElementById("enter-game-id").value = game.id;
@@ -190,6 +214,339 @@ backHomeBtn.addEventListener("click", () => {
     showScreen(homeScreen);
 });
 
+// --- Analysis Screen ---
+const analysisScreen = document.getElementById("analysis-screen");
+const analysisGameFilter = document.getElementById("analysis-game-filter");
+const analysisScopeFilter = document.getElementById("analysis-scope-filter");
+const analysisPlayerFilter = document.getElementById("analysis-player-filter");
+const battingStatsBody = document.getElementById("batting-stats-body");
+const battingStatsFoot = document.getElementById("batting-stats-foot");
+const analysisEmpty = document.getElementById("analysis-empty");
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+const COUNTING_COLS = ["PA", "AB", "H", "1B", "2B", "3B", "HR", "BB", "HBP", "SO", "TB"];
+const RATE_COLS = ["AVG", "OBP", "SLG", "OPS", "wOBA"];
+
+// Baseball convention: rate stats below 1 drop the leading zero (".333").
+function formatRate(value) {
+    const v = Number(value) || 0;
+    const s = v.toFixed(3);
+    return v < 1 && v >= 0 ? s.replace(/^0/, "") : s;
+}
+
+function statCell(text, extraClass) {
+    const td = document.createElement("td");
+    td.textContent = text;
+    if (extraClass) td.className = extraClass;
+    return td;
+}
+
+function makeStatRow(row, isTotal) {
+    const tr = document.createElement("tr");
+    if (isTotal) tr.className = "stats-total-row";
+
+    const nameTd = document.createElement("td");
+    nameTd.className = "sticky-col";
+    if (isTotal) {
+        nameTd.textContent = "Team totals";
+    } else {
+        const num = row.number ? `#${row.number} ` : "";
+        nameTd.textContent = `${num}${row.name}`;
+    }
+    tr.appendChild(nameTd);
+
+    COUNTING_COLS.forEach(col => tr.appendChild(statCell(row[col] ?? 0)));
+    RATE_COLS.forEach(col => tr.appendChild(statCell(formatRate(row[col]), "rate")));
+    return tr;
+}
+
+function computeTotals(rows) {
+    const totals = {};
+    COUNTING_COLS.forEach(col => { totals[col] = 0; });
+    rows.forEach(r => COUNTING_COLS.forEach(col => { totals[col] += r[col] || 0; }));
+
+    const ab = totals.AB, h = totals.H, bb = totals.BB, hbp = totals.HBP;
+    const onBaseDen = ab + bb + hbp;
+    totals.AVG = ab ? h / ab : 0;
+    totals.OBP = onBaseDen ? (h + bb + hbp) / onBaseDen : 0;
+    totals.SLG = ab ? totals.TB / ab : 0;
+    totals.OPS = totals.OBP + totals.SLG;
+    // wOBA totals use the same weights as the backend (stats.py WOBA_WEIGHTS).
+    const w = { BB: 0.69, HBP: 0.72, "1B": 0.89, "2B": 1.27, "3B": 1.62, HR: 2.10 };
+    const wobaNum = w.BB * bb + w.HBP * hbp + w["1B"] * totals["1B"]
+        + w["2B"] * totals["2B"] + w["3B"] * totals["3B"] + w.HR * totals.HR;
+    totals.wOBA = onBaseDen ? wobaNum / onBaseDen : 0;
+    return totals;
+}
+
+// ===== Charts =====
+
+function svgNode(tag, attrs) {
+    const el = document.createElementNS(SVG_NS, tag);
+    for (const k in attrs) el.setAttribute(k, attrs[k]);
+    return el;
+}
+
+// Categorical color slots (identity encoding), assigned in fixed order. Values
+// come from CSS custom properties on .charts-grid so light/dark swap in one
+// place; hardcoded values are a fallback.
+function seriesColor(idx) {
+    const root = document.querySelector(".charts-grid");
+    const fallback = ["#2a78d6", "#1baf7a", "#eda100", "#008300", "#4a3aa7", "#e34948"];
+    if (!root) return fallback[idx] || "#888";
+    const v = getComputedStyle(root).getPropertyValue(`--series-${idx + 1}`).trim();
+    return v || fallback[idx] || "#888";
+}
+
+function chromeColor(name, fallback) {
+    const root = document.querySelector(".charts-grid");
+    if (!root) return fallback;
+    const v = getComputedStyle(root).getPropertyValue(name).trim();
+    return v || fallback;
+}
+
+const PITCH_CATEGORIES = ["Ball", "Strike", "Foul", "In play"];
+
+function pitchCategory(ev) {
+    const o = ev.outcome;
+    if (o === "ball" || o === "walk" || o === "hbp") return "Ball";
+    if (o === "strike" || o === "strikeout") return "Strike";
+    if (o === "foul") return "Foul";
+    return "In play";  // single/double/triple/home_run/out/error
+}
+
+const SPRAY_CATEGORIES = ["Single", "Double", "Triple", "Home Run", "Out", "Error"];
+
+// --- Chart tooltip ---
+const chartTooltip = document.getElementById("chart-tooltip");
+
+function attachTooltip(node, text) {
+    node.addEventListener("mousemove", (e) => {
+        chartTooltip.textContent = text;
+        chartTooltip.style.left = (e.clientX + 12) + "px";
+        chartTooltip.style.top = (e.clientY + 12) + "px";
+        chartTooltip.classList.remove("hidden");
+    });
+    node.addEventListener("mouseleave", () => chartTooltip.classList.add("hidden"));
+}
+
+function renderLegend(el, categories, present) {
+    el.innerHTML = "";
+    categories.forEach((cat, i) => {
+        if (present && !present.has(cat)) return;
+        const chip = document.createElement("span");
+        chip.className = "legend-chip";
+        const dot = document.createElement("span");
+        dot.className = "legend-dot";
+        dot.style.background = seriesColor(i);
+        const label = document.createElement("span");
+        label.textContent = cat;
+        chip.appendChild(dot);
+        chip.appendChild(label);
+        el.appendChild(chip);
+    });
+}
+
+function renderPitchMap(events) {
+    const svg = document.getElementById("pitch-map");
+    const empty = document.getElementById("pitch-map-empty");
+    svg.innerHTML = "";
+
+    const grid = chromeColor("--grid", "#e1e0d9");
+    const axis = chromeColor("--axis", "#c3c2b7");
+    const surface = chromeColor("--surface-1", "#fcfcfb");
+
+    // Strike zone box within the 240x260 plot.
+    const zx = 70, zy = 60, zw = 100, zh = 100;
+    svg.appendChild(svgNode("rect", {
+        x: zx, y: zy, width: zw, height: zh, fill: "none",
+        stroke: axis, "stroke-width": 1.2, rx: 2,
+    }));
+    // 3x3 interior grid.
+    for (let i = 1; i < 3; i++) {
+        svg.appendChild(svgNode("line", {
+            x1: zx + (zw / 3) * i, y1: zy, x2: zx + (zw / 3) * i, y2: zy + zh,
+            stroke: grid, "stroke-width": 1,
+        }));
+        svg.appendChild(svgNode("line", {
+            x1: zx, y1: zy + (zh / 3) * i, x2: zx + zw, y2: zy + (zh / 3) * i,
+            stroke: grid, "stroke-width": 1,
+        }));
+    }
+
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+    const located = events.filter(e => e.zone_x != null && e.zone_y != null);
+    const present = new Set();
+
+    located.forEach(e => {
+        const cat = pitchCategory(e);
+        present.add(cat);
+        const idx = PITCH_CATEGORIES.indexOf(cat);
+        const px = clamp(zx + e.zone_x * zw, 16, 224);
+        const py = clamp(zy + e.zone_y * zh, 16, 244);
+        const dot = svgNode("circle", {
+            cx: px, cy: py, r: 4.5,
+            fill: seriesColor(idx),
+            stroke: surface, "stroke-width": 2,
+        });
+        const detail = e.hit_result ? ` (${e.hit_result})` : "";
+        attachTooltip(dot, `${e.batter_name}: ${cat}${detail}`);
+        svg.appendChild(dot);
+    });
+
+    empty.classList.toggle("hidden", located.length > 0);
+    renderLegend(document.getElementById("pitch-map-legend"), PITCH_CATEGORIES, present);
+}
+
+// Recessive baseball-field guide, drawn to fill a square viewBox of side `s`.
+// Home plate at bottom center; foul lines leave home at a true 45° and the
+// infield bases sit exactly on those lines; fence arc spans the foul poles.
+function drawFieldGuide(svg, s) {
+    const grid = chromeColor("--grid", "#e1e0d9");
+    const axis = chromeColor("--axis", "#c3c2b7");
+    const home = { x: s * 0.5, y: s * 0.86 };
+    const b = s * 0.14;  // diamond half-diagonal
+    const first = { x: home.x + b, y: home.y - b };
+    const second = { x: home.x, y: home.y - 2 * b };
+    const third = { x: home.x - b, y: home.y - b };
+    // Foul poles: extend the 45° foul lines out toward the corners.
+    const rp = { x: s * 0.94, y: s * 0.42 };
+    const lp = { x: s * 0.06, y: s * 0.42 };
+    svg.appendChild(svgNode("line", { x1: home.x, y1: home.y, x2: lp.x, y2: lp.y, stroke: axis, "stroke-width": 1.2 }));
+    svg.appendChild(svgNode("line", { x1: home.x, y1: home.y, x2: rp.x, y2: rp.y, stroke: axis, "stroke-width": 1.2 }));
+    // Outfield fence arc between the foul poles.
+    svg.appendChild(svgNode("path", {
+        d: `M ${lp.x} ${lp.y} Q ${home.x} ${s * -0.12} ${rp.x} ${rp.y}`,
+        fill: "none", stroke: grid, "stroke-width": 1,
+    }));
+    // Infield diamond (first & third fall on the foul lines).
+    svg.appendChild(svgNode("path", {
+        d: `M ${home.x} ${home.y} L ${first.x} ${first.y} L ${second.x} ${second.y} L ${third.x} ${third.y} Z`,
+        fill: "none", stroke: grid, "stroke-width": 1,
+    }));
+}
+
+function renderSprayChart(events) {
+    const svg = document.getElementById("spray-chart");
+    const empty = document.getElementById("spray-empty");
+    svg.innerHTML = "";
+    const S = 220;
+    drawFieldGuide(svg, S);
+
+    const surface = chromeColor("--surface-1", "#fcfcfb");
+    const located = events.filter(e => e.batted_ball_x != null && e.batted_ball_y != null && e.hit_result);
+    const present = new Set();
+
+    located.forEach(e => {
+        const idx = SPRAY_CATEGORIES.indexOf(e.hit_result);
+        if (idx === -1) return;
+        present.add(e.hit_result);
+        const dot = svgNode("circle", {
+            cx: e.batted_ball_x * S, cy: e.batted_ball_y * S, r: 4.5,
+            fill: seriesColor(idx),
+            stroke: surface, "stroke-width": 2,
+        });
+        const type = e.hit_type ? `, ${e.hit_type}` : "";
+        attachTooltip(dot, `${e.batter_name}: ${e.hit_result}${type}`);
+        svg.appendChild(dot);
+    });
+
+    empty.classList.toggle("hidden", located.length > 0);
+    renderLegend(document.getElementById("spray-legend"), SPRAY_CATEGORIES, present);
+}
+
+function populatePlayerFilter(allRows) {
+    const desired = analysisPlayerFilter.value;
+    analysisPlayerFilter.innerHTML = '<option value="">All batters</option>';
+    allRows.forEach(r => {
+        const opt = document.createElement("option");
+        opt.value = r.player_id;
+        const num = r.number ? `#${r.number} ` : "";
+        opt.textContent = `${num}${r.name}`;
+        analysisPlayerFilter.appendChild(opt);
+    });
+    // Preserve the selection if it still exists.
+    analysisPlayerFilter.value =
+        [...analysisPlayerFilter.options].some(o => o.value === desired) ? desired : "";
+}
+
+async function loadAnalysis() {
+    const gameId = analysisGameFilter.value || null;
+    const scope = analysisScopeFilter.value || "my_team";
+    const allRows = await window.pywebview.api.get_batting_stats(gameId, scope);
+
+    battingStatsBody.innerHTML = "";
+    battingStatsFoot.innerHTML = "";
+
+    const rowsOk = Array.isArray(allRows) && allRows.length > 0;
+    populatePlayerFilter(rowsOk ? allRows : []);
+    const playerId = analysisPlayerFilter.value || null;
+
+    if (!rowsOk) {
+        analysisEmpty.classList.remove("hidden");
+        renderPitchMap([]);
+        renderSprayChart([]);
+        return;
+    }
+    analysisEmpty.classList.add("hidden");
+
+    const rows = playerId ? allRows.filter(r => r.player_id === playerId) : allRows;
+    rows.forEach(row => battingStatsBody.appendChild(makeStatRow(row, false)));
+    battingStatsFoot.appendChild(makeStatRow(computeTotals(rows), true));
+
+    const events = await window.pywebview.api.get_pitch_events(gameId, scope, playerId);
+    const evList = Array.isArray(events) ? events : [];
+    renderPitchMap(evList);
+    renderSprayChart(evList);
+}
+
+async function populateGameFilter() {
+    const rosterTeams = await window.pywebview.api.get_roster_teams();
+    const teamMap = {};
+    (rosterTeams || []).forEach(t => { teamMap[t.id] = t.team_name; });
+
+    const games = await window.pywebview.api.get_games();
+    analysisGameFilter.innerHTML = '<option value="">All games</option>';
+    (games || []).forEach(g => {
+        const opp = teamMap[g.opponent_id] || g.opponent_id;
+        const prefix = g.home_away === "away" ? "@ " : "vs ";
+        const opt = document.createElement("option");
+        opt.value = g.id;
+        opt.textContent = `${prefix}${opp} (${g.home_score}-${g.away_score})`;
+        analysisGameFilter.appendChild(opt);
+    });
+}
+
+document.getElementById("analyze-btn").addEventListener("click", async () => {
+    showScreen(analysisScreen);
+    await populateGameFilter();
+    await loadAnalysis();
+});
+
+analysisGameFilter.addEventListener("change", loadAnalysis);
+analysisScopeFilter.addEventListener("change", loadAnalysis);
+analysisPlayerFilter.addEventListener("change", loadAnalysis);
+
+async function runExport(apiCall) {
+    const gameId = analysisGameFilter.value || null;
+    const scope = analysisScopeFilter.value || "my_team";
+    const result = await apiCall(gameId, scope);
+    if (result && result.path) {
+        showToast(`Exported to ${result.path}`);
+    } else if (result && result.error) {
+        showToast(result.error);
+    }
+}
+
+document.getElementById("export-csv-btn").addEventListener("click", () =>
+    runExport((g, s) => window.pywebview.api.export_batting_csv(g, s)));
+document.getElementById("export-html-btn").addEventListener("click", () =>
+    runExport((g, s) => window.pywebview.api.export_html_summary(g, s)));
+
+document.getElementById("back-dashboard-from-analysis-btn").addEventListener("click", () => {
+    showScreen(dashboardScreen);
+});
+
 // --- Add Player Modal ---
 
 addPlayerBtn.addEventListener("click", () => {
@@ -304,6 +661,10 @@ const gameScreen = document.getElementById("game-screen");
 const gameScreenTitle = document.getElementById("game-screen-title");
 const backDashboardBtn = document.getElementById("back-dashboard-btn");
 const saveGameBtn = document.getElementById("save-game-btn");
+const endGameBtn = document.getElementById("end-game-btn");
+const unsavedModal = document.getElementById("unsaved-modal");
+const endGameModal = document.getElementById("end-game-modal");
+let pendingLeaveAction = null;
 
 cancelEnterGameBtn.addEventListener("click", () => {
     enterGameModal.classList.add("hidden");
@@ -352,6 +713,16 @@ startGameBtn.addEventListener("click", async () => {
         homeBatterIdx = 0;
         awayBatterIdx = 0;
     }
+    pitchCounts = selectedGame.pitch_counts || {};
+
+    // Undo bookkeeping for this session.
+    const pitchesArr = selectedGame.pitches || [];
+    recordedPitches = pitchesArr.length;
+    recordedBaserunning = (selectedGame.baserunning || []).length;
+    lastPitchId = pitchesArr.length ? pitchesArr[pitchesArr.length - 1].id : null;
+    undoStack = [];
+    updateUndoButton();
+
     updateGameState();
     markSaveClean();
 
@@ -360,14 +731,24 @@ startGameBtn.addEventListener("click", async () => {
 });
 
 function markSaveDirty() {
-    saveGameBtn.className = "save-btn save-dirty";
+    if (autosaveEnabled) {
+        saveCurrentGame();
+    } else {
+        saveGameBtn.className = "save-btn save-dirty";
+        saveGameBtn.textContent = "Save";
+    }
 }
 
 function markSaveClean() {
     saveGameBtn.className = "save-btn save-clean";
+    saveGameBtn.textContent = autosaveEnabled ? "Autosaving" : "Save";
 }
 
-saveGameBtn.addEventListener("click", async () => {
+function isSaveDirty() {
+    return saveGameBtn.classList.contains("save-dirty");
+}
+
+async function saveCurrentGame() {
     const homeScore = parseInt(document.getElementById("sb-home-score").textContent);
     const awayScore = parseInt(document.getElementById("sb-away-score").textContent);
     const state = {
@@ -384,15 +765,77 @@ saveGameBtn.addEventListener("click", async () => {
     await window.pywebview.api.update_score(homeScore, awayScore);
     await window.pywebview.api.save_game();
     markSaveClean();
-});
+}
 
-backDashboardBtn.addEventListener("click", async () => {
-    // Close all open modals/menus
+function leaveGame() {
     hidePitchMenu();
     clearPitchDots();
     document.querySelectorAll(".modal-overlay").forEach(m => m.classList.add("hidden"));
-    await loadDashboard();
+    loadDashboard();
     showScreen(dashboardScreen);
+}
+
+function tryLeaveGame(action) {
+    if (isSaveDirty()) {
+        pendingLeaveAction = action;
+        unsavedModal.classList.remove("hidden");
+    } else {
+        action();
+    }
+}
+
+saveGameBtn.addEventListener("click", () => saveCurrentGame());
+
+document.getElementById("undo-btn").addEventListener("click", () => undoLastEvent());
+
+backDashboardBtn.addEventListener("click", () => {
+    tryLeaveGame(leaveGame);
+});
+
+// --- End Game ---
+endGameBtn.addEventListener("click", () => {
+    endGameModal.classList.remove("hidden");
+});
+
+document.getElementById("end-game-confirm-btn").addEventListener("click", async () => {
+    await saveCurrentGame();
+    await window.pywebview.api.end_game();
+    endGameModal.classList.add("hidden");
+    leaveGame();
+});
+
+document.getElementById("end-game-cancel-btn").addEventListener("click", () => {
+    endGameModal.classList.add("hidden");
+});
+
+endGameModal.addEventListener("click", (e) => {
+    if (e.target === endGameModal) endGameModal.classList.add("hidden");
+});
+
+// --- Unsaved Changes Modal ---
+document.getElementById("unsaved-save-btn").addEventListener("click", async () => {
+    await saveCurrentGame();
+    unsavedModal.classList.add("hidden");
+    if (pendingLeaveAction) pendingLeaveAction();
+    pendingLeaveAction = null;
+});
+
+document.getElementById("unsaved-leave-btn").addEventListener("click", () => {
+    unsavedModal.classList.add("hidden");
+    if (pendingLeaveAction) pendingLeaveAction();
+    pendingLeaveAction = null;
+});
+
+document.getElementById("unsaved-cancel-btn").addEventListener("click", () => {
+    unsavedModal.classList.add("hidden");
+    pendingLeaveAction = null;
+});
+
+unsavedModal.addEventListener("click", (e) => {
+    if (e.target === unsavedModal) {
+        unsavedModal.classList.add("hidden");
+        pendingLeaveAction = null;
+    }
 });
 
 // --- Close modals on overlay click ---
@@ -493,6 +936,12 @@ let strikes = 0;
 let outs = 0;
 let bases = { first: null, second: null, third: null };
 let lastPitchId = null;
+let pitchCounts = {};
+let undoStack = [];
+let recordedPitches = 0;      // mirrors backend game.pitches.length
+let recordedBaserunning = 0;  // mirrors backend game.baserunning.length
+let toastTimer = null;
+let battedBallLoc = null;     // {x, y} normalized field location for a hit, or null
 
 function lineupIds(side) {
     return (side === "home" ? homeLineup : awayLineup).map(e => e.id);
@@ -606,6 +1055,16 @@ function updateInfoBar() {
     } else {
         document.getElementById("sb-pitcher-name").textContent = "--";
     }
+
+    updatePitchCount();
+}
+
+function updatePitchCount() {
+    const fieldingSide = inningHalf === "top" ? "home" : "away";
+    const fieldingLineup = fieldingSide === "home" ? homeLineup : awayLineup;
+    const pitcherEntry = fieldingLineup.find(e => e.position === "P");
+    const count = pitcherEntry ? (pitchCounts[pitcherEntry.id] || 0) : 0;
+    document.getElementById("sb-pitch-count").textContent = count;
 }
 
 function initLineupDropZones() {
@@ -801,9 +1260,9 @@ function showPitchMenu(x, y) {
 
 let pitchDots = [];
 
-function placePitchDot(x, y) {
+function placePitchDot(x, y, isBall) {
     const dot = document.createElement("div");
-    dot.className = "pitch-dot finalized";
+    dot.className = "pitch-dot finalized" + (isBall ? " ball" : "");
     dot.style.left = x + "px";
     dot.style.top = y + "px";
     document.body.appendChild(dot);
@@ -817,6 +1276,7 @@ function clearPitchDots() {
 
 function hidePitchMenu() {
     pitchMenu.classList.add("hidden");
+    document.getElementById("strike-submenu").classList.add("hidden");
     document.getElementById("hit-submenu").classList.add("hidden");
     document.getElementById("hit-type-submenu").classList.add("hidden");
     ballCursor.classList.remove("pinned");
@@ -895,7 +1355,121 @@ function getCurrentPitcherId() {
     return entry ? entry.id : null;
 }
 
-function buildPitchData(outcome, hitResult, hitType) {
+function isPitchInZone(x, y) {
+    const zone = document.querySelector(".strike-zone");
+    const rect = zone.getBoundingClientRect();
+    const ballRadius = (180 * 2.9 / 17) / 2;
+    // Ball overlaps zone if its edge touches the zone rectangle
+    return (
+        x + ballRadius > rect.left &&
+        x - ballRadius < rect.right &&
+        y + ballRadius > rect.top &&
+        y - ballRadius < rect.bottom
+    );
+}
+
+// --- Toast (transient user feedback for guardrails) ---
+
+function showToast(msg) {
+    const t = document.getElementById("toast");
+    if (!t) return;
+    t.textContent = msg;
+    t.classList.remove("hidden");
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.classList.add("hidden"), 2500);
+}
+
+// --- Guardrails ---
+
+function canRecordPitch() {
+    if (!getCurrentBatterId()) {
+        return { ok: false, msg: "Set a batting lineup before recording pitches." };
+    }
+    if (!getCurrentPitcherId()) {
+        return { ok: false, msg: "Assign a pitcher (position P) before recording pitches." };
+    }
+    return { ok: true };
+}
+
+// --- Undo ---
+
+function updateUndoButton() {
+    const btn = document.getElementById("undo-btn");
+    if (btn) btn.disabled = undoStack.length === 0;
+}
+
+function snapshotState() {
+    undoStack.push({
+        inningNum, inningHalf, balls, strikes, outs,
+        bases: { first: bases.first, second: bases.second, third: bases.third },
+        homeBatterIdx, awayBatterIdx,
+        homeScore: selectedGame.home_score,
+        awayScore: selectedGame.away_score,
+        recordedPitches, recordedBaserunning,
+        pitchCounts: Object.assign({}, pitchCounts),
+        lastPitchId,
+    });
+    updateUndoButton();
+}
+
+async function undoLastEvent() {
+    if (undoStack.length === 0) return;
+    const s = undoStack.pop();
+
+    inningNum = s.inningNum;
+    inningHalf = s.inningHalf;
+    balls = s.balls;
+    strikes = s.strikes;
+    outs = s.outs;
+    bases = { first: s.bases.first, second: s.bases.second, third: s.bases.third };
+    homeBatterIdx = s.homeBatterIdx;
+    awayBatterIdx = s.awayBatterIdx;
+    selectedGame.home_score = s.homeScore;
+    selectedGame.away_score = s.awayScore;
+    document.getElementById("sb-home-score").textContent = s.homeScore;
+    document.getElementById("sb-away-score").textContent = s.awayScore;
+    pitchCounts = Object.assign({}, s.pitchCounts);
+    recordedPitches = s.recordedPitches;
+    recordedBaserunning = s.recordedBaserunning;
+    lastPitchId = s.lastPitchId;
+
+    // Close any in-progress pitch/runner UI so it can't act on stale state.
+    hidePitchMenu();
+    document.getElementById("runner-resolution").classList.add("hidden");
+
+    // Sync the persisted event logs with the restored live state.
+    await window.pywebview.api.undo_last_event(recordedPitches, recordedBaserunning);
+
+    clearPitchDots();
+    updateGameState();
+    renderLineup("home");
+    renderLineup("away");
+    updateUndoButton();
+    markSaveDirty();
+}
+
+// Centralized baserunning recorder so the undo counter stays accurate.
+function recordBaserunning(entry) {
+    recordedBaserunning++;
+    return window.pywebview.api.record_baserunning(entry);
+}
+
+// Pitch location normalized to the strike zone: 0..1 across the zone box,
+// negative or >1 outside it. Stored so pitch-location maps are reproducible
+// (raw loc_x/loc_y are screen pixels tied to the scoring session's layout).
+function computeZoneCoords(x, y) {
+    const zone = document.querySelector(".strike-zone");
+    if (!zone) return { zx: null, zy: null };
+    const r = zone.getBoundingClientRect();
+    if (!r.width || !r.height) return { zx: null, zy: null };
+    return {
+        zx: Math.round(((x - r.left) / r.width) * 1000) / 1000,
+        zy: Math.round(((y - r.top) / r.height) * 1000) / 1000,
+    };
+}
+
+function buildPitchData(outcome, hitResult, hitType, strikeType) {
+    const zc = computeZoneCoords(pitchClickX, pitchClickY);
     return {
         batter_id: getCurrentBatterId(),
         pitcher_id: getCurrentPitcherId(),
@@ -911,25 +1485,41 @@ function buildPitchData(outcome, hitResult, hitType) {
         },
         loc_x: pitchClickX,
         loc_y: pitchClickY,
+        zone_x: zc.zx,
+        zone_y: zc.zy,
+        in_zone: isPitchInZone(pitchClickX, pitchClickY),
         outcome: outcome,
         hit_result: hitResult || null,
         hit_type: hitType || null,
+        strike_type: strikeType || null,
+        batted_ball_x: battedBallLoc ? battedBallLoc.x : null,
+        batted_ball_y: battedBallLoc ? battedBallLoc.y : null,
         home_score: selectedGame.home_score,
         away_score: selectedGame.away_score,
     };
 }
 
-async function recordPitch(outcome, hitResult, hitType) {
-    const data = buildPitchData(outcome, hitResult, hitType);
+async function recordPitch(outcome, hitResult, hitType, strikeType) {
+    const data = buildPitchData(outcome, hitResult, hitType, strikeType);
+    recordedPitches++;  // keep undo counter in sync with backend append
+    const pitcherId = data.pitcher_id;
+    if (pitcherId) {
+        pitchCounts[pitcherId] = (pitchCounts[pitcherId] || 0) + 1;
+    }
+    updatePitchCount();
     const result = await window.pywebview.api.pitch(data);
+    if (result && result.pitch_counts) {
+        pitchCounts = result.pitch_counts;
+    }
     if (result && result.pitches && result.pitches.length > 0) {
         lastPitchId = result.pitches[result.pitches.length - 1].id;
     }
 }
 
-function handlePitchOutcome(outcome) {
+function handlePitchOutcome(outcome, strikeType) {
+    snapshotState();
     markSaveDirty();
-    placePitchDot(pitchClickX, pitchClickY);
+    placePitchDot(pitchClickX, pitchClickY, outcome === "Ball");
     let atBatOver = false;
 
     // Snapshot pre-outcome state for pitch data
@@ -939,7 +1529,7 @@ function handlePitchOutcome(outcome) {
         case "Strike":
             strikes++;
             if (strikes >= 3) {
-                recordPitch("strikeout");
+                recordPitch("strikeout", null, null, strikeType);
                 recordOut();
                 return;
             }
@@ -987,7 +1577,7 @@ function handlePitchOutcome(outcome) {
     }
 
     if (!atBatOver) {
-        recordPitch(outcome.toLowerCase());
+        recordPitch(outcome.toLowerCase(), null, null, strikeType);
     }
 
     if (atBatOver) endAtBat();
@@ -1112,6 +1702,7 @@ function showRunnerResolution(hitResult, hitType) {
 }
 
 function handleHitOutcome(hitResult, hitType) {
+    snapshotState();
     markSaveDirty();
     placePitchDot(pitchClickX, pitchClickY);
 
@@ -1145,7 +1736,7 @@ document.getElementById("runner-resolution-confirm").addEventListener("click", (
         if (outcome.startsWith("out_at_")) {
             // Runner is out
             outsThisPlay++;
-            window.pywebview.api.record_baserunning({
+            recordBaserunning({
                 pitch_id: lastPitchId,
                 baserunner_id: playerId,
                 starting_base: startBase,
@@ -1156,7 +1747,7 @@ document.getElementById("runner-resolution-confirm").addEventListener("click", (
         } else if (outcome === "home") {
             // Runner scores
             if (battingSide === "home") { selectedGame.home_score++; } else { selectedGame.away_score++; }
-            window.pywebview.api.record_baserunning({
+            recordBaserunning({
                 pitch_id: lastPitchId,
                 baserunner_id: playerId,
                 starting_base: startBase,
@@ -1167,7 +1758,7 @@ document.getElementById("runner-resolution-confirm").addEventListener("click", (
         } else {
             // Runner advances to a base
             bases[outcome] = playerId;
-            window.pywebview.api.record_baserunning({
+            recordBaserunning({
                 pitch_id: lastPitchId,
                 baserunner_id: playerId,
                 starting_base: startBase,
@@ -1211,30 +1802,39 @@ document.getElementById("runner-resolution-confirm").addEventListener("click", (
 
 const hitSubmenu = document.getElementById("hit-submenu");
 
+function showSubmenuNextTo(submenu, anchor) {
+    const rect = anchor.getBoundingClientRect();
+    let left = rect.right + 2;
+    let top = rect.top;
+    submenu.style.left = left + "px";
+    submenu.style.top = top + "px";
+    submenu.classList.remove("hidden");
+
+    const subH = submenu.offsetHeight;
+    const subW = submenu.offsetWidth;
+    if (top + subH > window.innerHeight) {
+        submenu.style.top = (window.innerHeight - subH - 4) + "px";
+    }
+    if (left + subW > window.innerWidth) {
+        submenu.style.left = (rect.left - subW - 2) + "px";
+    }
+}
+
+const strikeSubmenu = document.getElementById("strike-submenu");
+
 document.querySelectorAll("#pitch-menu .pitch-menu-item").forEach(btn => {
     btn.addEventListener("click", (e) => {
         e.stopPropagation();
+        if (btn.dataset.outcome === "Strike") {
+            showSubmenuNextTo(strikeSubmenu, pitchMenu);
+            return;
+        }
         if (btn.dataset.outcome === "Hit") {
-            // Show hit submenu next to pitch menu
-            const rect = pitchMenu.getBoundingClientRect();
-            let left = rect.right + 2;
-            let top = rect.top;
-            hitSubmenu.style.left = left + "px";
-            hitSubmenu.style.top = top + "px";
-            hitSubmenu.classList.remove("hidden");
-
-            // Keep within viewport
-            const subH = hitSubmenu.offsetHeight;
-            const subW = hitSubmenu.offsetWidth;
-            if (top + subH > window.innerHeight) {
-                hitSubmenu.style.top = (window.innerHeight - subH - 4) + "px";
-            }
-            if (left + subW > window.innerWidth) {
-                hitSubmenu.style.left = (rect.left - subW - 2) + "px";
-            }
+            showSubmenuNextTo(hitSubmenu, pitchMenu);
             return;
         }
         hitSubmenu.classList.add("hidden");
+        strikeSubmenu.classList.add("hidden");
         handlePitchOutcome(btn.dataset.outcome);
         hidePitchMenu();
     });
@@ -1243,46 +1843,81 @@ document.querySelectorAll("#pitch-menu .pitch-menu-item").forEach(btn => {
 const hitTypeSubmenu = document.getElementById("hit-type-submenu");
 let pendingHitResult = null;
 
-function showHitTypeMenu(anchorEl) {
-    const rect = anchorEl.getBoundingClientRect();
-    let left = rect.right + 2;
-    let top = rect.top;
-    hitTypeSubmenu.style.left = left + "px";
-    hitTypeSubmenu.style.top = top + "px";
-    hitTypeSubmenu.classList.remove("hidden");
+// --- Strike submenu handlers ---
+document.querySelectorAll("#strike-submenu .pitch-menu-item").forEach(btn => {
+    btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        handlePitchOutcome("Strike", btn.dataset.striketype);
+        hidePitchMenu();
+    });
+});
 
-    const subH = hitTypeSubmenu.offsetHeight;
-    const subW = hitTypeSubmenu.offsetWidth;
-    if (top + subH > window.innerHeight) {
-        hitTypeSubmenu.style.top = (window.innerHeight - subH - 4) + "px";
-    }
-    if (left + subW > window.innerWidth) {
-        hitTypeSubmenu.style.left = (rect.left - subW - 2) + "px";
-    }
-}
+document.getElementById("strike-submenu-cancel").addEventListener("click", (e) => {
+    e.stopPropagation();
+    strikeSubmenu.classList.add("hidden");
+});
 
 document.querySelectorAll("#hit-submenu .pitch-menu-item").forEach(btn => {
     btn.addEventListener("click", (e) => {
         e.stopPropagation();
         pendingHitResult = btn.dataset.hit;
-        showHitTypeMenu(hitSubmenu);
+        showSubmenuNextTo(hitTypeSubmenu, hitSubmenu);
     });
 });
 
 document.querySelectorAll("#hit-type-submenu .pitch-menu-item").forEach(btn => {
-    btn.addEventListener("click", (e) => {
+    btn.addEventListener("click", async (e) => {
         e.stopPropagation();
-        handleHitOutcome(pendingHitResult, btn.dataset.hittype);
+        const hitResult = pendingHitResult;
+        const hitType = btn.dataset.hittype;
         hitTypeSubmenu.classList.add("hidden");
         hitSubmenu.classList.add("hidden");
         hidePitchMenu();
+
+        // Optionally capture where the ball was hit (for spray charts).
+        battedBallLoc = await pickBattedBallLocation();
+        handleHitOutcome(hitResult, hitType);
+        battedBallLoc = null;
     });
 });
 
+// --- Batted-ball location picker ---
+
+let bbResolve = null;
+const battedBallModal = document.getElementById("batted-ball-modal");
+const bbField = document.getElementById("bb-field");
+
+function pickBattedBallLocation() {
+    return new Promise((resolve) => {
+        bbResolve = resolve;
+        battedBallModal.classList.remove("hidden");
+    });
+}
+
+function resolveBattedBall(value) {
+    battedBallModal.classList.add("hidden");
+    if (bbResolve) {
+        bbResolve(value);
+        bbResolve = null;
+    }
+}
+
+if (bbField) {
+    drawFieldGuide(bbField, 200);
+    bbField.addEventListener("click", (e) => {
+        const r = bbField.getBoundingClientRect();
+        const x = Math.round(((e.clientX - r.left) / r.width) * 1000) / 1000;
+        const y = Math.round(((e.clientY - r.top) / r.height) * 1000) / 1000;
+        resolveBattedBall({ x, y });
+    });
+    document.getElementById("bb-skip-btn").addEventListener("click", () => resolveBattedBall(null));
+    battedBallModal.addEventListener("click", (e) => {
+        if (e.target === battedBallModal) resolveBattedBall(null);
+    });
+}
+
 document.getElementById("pitch-menu-cancel").addEventListener("click", (e) => {
     e.stopPropagation();
-    hitTypeSubmenu.classList.add("hidden");
-    hitSubmenu.classList.add("hidden");
     hidePitchMenu();
 });
 
@@ -1302,6 +1937,12 @@ document.addEventListener("mousedown", (e) => {
     if (!pitchMenu.classList.contains("hidden")) return;
     if (gameScreen.classList.contains("hidden")) return;
     if (e.target.closest("button, .lineup-panel, .modal-overlay, .score-bug, .pitch-menu, .game-bases-display, #runner-menu, #runner-resolution, select, input")) return;
+
+    const check = canRecordPitch();
+    if (!check.ok) {
+        showToast(check.msg);
+        return;
+    }
 
     showPitchMenu(e.clientX, e.clientY);
 });
@@ -1438,12 +2079,18 @@ function showRunnerMenu(x, y, options, callback) {
 }
 
 function applyRunnerMove(from, to, reason) {
+    // Guardrail: don't stack two runners on the same base.
+    if (to !== "home" && bases[to]) {
+        showToast("That base is already occupied.");
+        return;
+    }
+    snapshotState();
     markSaveDirty();
     const battingSide = inningHalf === "top" ? "away" : "home";
     const runnerId = bases[from];
 
     // Record baserunning event
-    window.pywebview.api.record_baserunning({
+    recordBaserunning({
         pitch_id: lastPitchId,
         baserunner_id: runnerId,
         starting_base: from,
@@ -1470,11 +2117,12 @@ function applyRunnerMove(from, to, reason) {
 }
 
 function applyRunnerOut(from, reason) {
+    snapshotState();
     markSaveDirty();
     const runnerId = bases[from];
 
     // Record baserunning event
-    window.pywebview.api.record_baserunning({
+    recordBaserunning({
         pitch_id: lastPitchId,
         baserunner_id: runnerId,
         starting_base: from,
@@ -1550,4 +2198,11 @@ document.addEventListener("mouseup", (e) => {
 
 window.addEventListener("pywebviewready", () => {
     loadTeams();
+});
+
+window.addEventListener("beforeunload", (e) => {
+    if (isSaveDirty() && !gameScreen.classList.contains("hidden")) {
+        e.preventDefault();
+        e.returnValue = "";
+    }
 });
