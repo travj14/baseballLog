@@ -243,3 +243,252 @@ def compute_season_record(game_log):
         "runs_against": runs_against,
         "run_diff": runs_for - runs_against,
     }
+
+
+# ===== Splits =====
+
+def _split_key(pitch, game, dimension, name_map):
+    """Bucket label for a terminal pitch under the chosen split dimension."""
+    if dimension == "count":
+        return f"{pitch.get('balls', 0)}-{pitch.get('strikes', 0)}"
+    if dimension == "inning":
+        return f"Inn {pitch.get('inning', '?')}"
+    if dimension == "zone":
+        return "In zone" if pitch.get("in_zone") else "Out of zone"
+    if dimension == "pitch_type":
+        return pitch.get("pitch_type") or "Unspecified"
+    if dimension == "opponent":
+        return name_map.get(game.get("opponent_id"), game.get("opponent_id") or "?")
+    if dimension == "baseout":
+        r = pitch.get("runners") or {}
+        occ = "".join(b for b, k in (("1", "first_id"), ("2", "second_id"), ("3", "third_id")) if r.get(k))
+        return f"{pitch.get('outs', 0)} out, {occ or 'bases empty'}"
+    return "All"
+
+
+def compute_splits(games, roster_teams, dimension, player_ids=None, game_id=None):
+    """Batting stat lines bucketed by a split dimension (count, inning, zone,
+    pitch_type, opponent, or baseout)."""
+    name_map = {t["id"]: t.get("team_name", "") for t in roster_teams}
+    allowed = set(player_ids) if player_ids is not None else None
+
+    buckets = {}
+    for game in games:
+        if game_id is not None and game.get("id") != game_id:
+            continue
+        for pitch in game.get("pitches", []):
+            outcome = pitch.get("outcome")
+            if outcome not in PA_OUTCOMES:
+                continue
+            batter_id = pitch.get("batter_id")
+            if not batter_id:
+                continue
+            if allowed is not None and batter_id not in allowed:
+                continue
+            key = _split_key(pitch, game, dimension, name_map)
+            if key not in buckets:
+                buckets[key] = _blank_line()
+            _apply_outcome(buckets[key], outcome)
+
+    result = []
+    for key, line in buckets.items():
+        row = {"bucket": key}
+        row.update(_finalize(line))
+        result.append(row)
+    result.sort(key=lambda r: (-r["PA"], r["bucket"]))
+    return result
+
+
+# ===== Pitching =====
+
+# Pitches that are not strikes (everything else — called/swinging/foul/in-play — is).
+NON_STRIKE_OUTCOMES = {"ball", "walk", "hbp"}
+
+
+def _blank_pitching():
+    return {"BF": 0, "P": 0, "H": 0, "SO": 0, "BB": 0, "HBP": 0, "R": 0, "ER": 0, "_strikes": 0}
+
+
+def _finalize_pitching(line):
+    p = line["P"]
+    line["Strike%"] = round(line["_strikes"] / p, 3) if p else 0.0
+    del line["_strikes"]
+    return line
+
+
+def compute_pitching_stats(games, roster_teams, pitcher_ids=None, game_id=None):
+    """Per-pitcher lines: batters faced, pitches, hits, K, BB, HBP, R, ER,
+    strike%. Runs come from scored baserunning events (ending_base == home)."""
+    name_map = {}
+    for team in roster_teams:
+        for p in team.get("roster", []):
+            name_map[p["id"]] = {
+                "player_id": p["id"],
+                "number": p.get("number", ""),
+                "name": f"{p.get('first_name', '')} {p.get('last_name', '')}".strip(),
+            }
+    allowed = set(pitcher_ids) if pitcher_ids is not None else None
+
+    lines = {}
+
+    def line_for(pid):
+        if pid not in lines:
+            lines[pid] = _blank_pitching()
+        return lines[pid]
+
+    for game in games:
+        if game_id is not None and game.get("id") != game_id:
+            continue
+        for pitch in game.get("pitches", []):
+            pid = pitch.get("pitcher_id")
+            if not pid or (allowed is not None and pid not in allowed):
+                continue
+            L = line_for(pid)
+            L["P"] += 1
+            outcome = pitch.get("outcome")
+            if outcome not in NON_STRIKE_OUTCOMES:
+                L["_strikes"] += 1
+            if outcome in PA_OUTCOMES:
+                L["BF"] += 1
+                if outcome in HIT_OUTCOMES:
+                    L["H"] += 1
+                elif outcome == "strikeout":
+                    L["SO"] += 1
+                elif outcome == "walk":
+                    L["BB"] += 1
+                elif outcome == "hbp":
+                    L["HBP"] += 1
+        # Runs charged to the pitcher on the mound when the run scored.
+        for ev in game.get("baserunning", []):
+            if ev.get("ending_base") != "home":
+                continue
+            pid = ev.get("pitcher_id")
+            if not pid or (allowed is not None and pid not in allowed):
+                continue
+            L = line_for(pid)
+            L["R"] += 1
+            if ev.get("earned", True):
+                L["ER"] += 1
+
+    result = []
+    for pid, line in lines.items():
+        info = name_map.get(pid, {"player_id": pid, "number": "", "name": pid})
+        row = dict(info)
+        row.update(_finalize_pitching(line))
+        result.append(row)
+    result.sort(key=lambda r: (-r["BF"], r["name"]))
+    return result
+
+
+# ===== Baserunning =====
+
+def compute_baserunning_stats(games, roster_teams, player_ids=None, game_id=None):
+    """Per-runner lines: stolen bases, caught stealing, pickoffs, runs scored,
+    and outs on the bases, from recorded baserunning events."""
+    name_map = {}
+    for team in roster_teams:
+        for p in team.get("roster", []):
+            name_map[p["id"]] = {
+                "player_id": p["id"],
+                "number": p.get("number", ""),
+                "name": f"{p.get('first_name', '')} {p.get('last_name', '')}".strip(),
+            }
+    allowed = set(player_ids) if player_ids is not None else None
+
+    lines = {}
+    for game in games:
+        if game_id is not None and game.get("id") != game_id:
+            continue
+        for ev in game.get("baserunning", []):
+            rid = ev.get("baserunner_id")
+            if not rid or (allowed is not None and rid not in allowed):
+                continue
+            L = lines.setdefault(rid, {"SB": 0, "CS": 0, "PO": 0, "R": 0, "OUT": 0})
+            etype = ev.get("type")
+            is_out = ev.get("out")
+            if etype == "Stolen Base" and not is_out:
+                L["SB"] += 1
+            elif etype == "Caught Stealing":
+                L["CS"] += 1
+            elif etype == "Picked Off":
+                L["PO"] += 1
+            if ev.get("ending_base") == "home" and not is_out:
+                L["R"] += 1
+            if is_out:
+                L["OUT"] += 1
+
+    result = []
+    for rid, line in lines.items():
+        info = name_map.get(rid, {"player_id": rid, "number": "", "name": rid})
+        row = dict(info)
+        attempts = line["SB"] + line["CS"]
+        row.update(line)
+        row["SB%"] = round(line["SB"] / attempts, 3) if attempts else 0.0
+        result.append(row)
+    result.sort(key=lambda r: (-(r["SB"] + r["R"]), r["name"]))
+    return result
+
+
+# ===== Fielding =====
+
+# Standard scorekeeping position numbers.
+POSITION_LABELS = {
+    "1": "P", "2": "C", "3": "1B", "4": "2B", "5": "3B",
+    "6": "SS", "7": "LF", "8": "CF", "9": "RF",
+    "P": "P", "C": "C",
+}
+
+
+def compute_fielding_stats(games, roster_teams, player_ids=None, game_id=None):
+    """Per-fielder putouts and errors, from the optional `fielded_by` position
+    recorded on in-play outcomes. The fielder is resolved via the fielding
+    lineup for that half-inning."""
+    name_map = {}
+    for team in roster_teams:
+        for p in team.get("roster", []):
+            name_map[p["id"]] = {
+                "player_id": p["id"],
+                "number": p.get("number", ""),
+                "name": f"{p.get('first_name', '')} {p.get('last_name', '')}".strip(),
+            }
+    allowed = set(player_ids) if player_ids is not None else None
+
+    def lineup_pos_map(lineup):
+        m = {}
+        for entry in lineup or []:
+            if isinstance(entry, dict) and entry.get("position"):
+                m[str(entry["position"])] = entry["id"]
+        return m
+
+    lines = {}
+    for game in games:
+        if game_id is not None and game.get("id") != game_id:
+            continue
+        home_map = lineup_pos_map(game.get("home_lineup"))
+        away_map = lineup_pos_map(game.get("away_lineup"))
+        for pitch in game.get("pitches", []):
+            pos = pitch.get("fielded_by")
+            if not pos:
+                continue
+            pos = str(pos)
+            # Fielding side is the one not batting: top -> home fields.
+            fielding_map = home_map if pitch.get("half") == "top" else away_map
+            fielder_id = fielding_map.get(pos)
+            if not fielder_id or (allowed is not None and fielder_id not in allowed):
+                continue
+            L = lines.setdefault(fielder_id, {"POS": POSITION_LABELS.get(pos, pos), "PO": 0, "E": 0})
+            if pitch.get("outcome") == "error":
+                L["E"] += 1
+            else:
+                L["PO"] += 1
+
+    result = []
+    for fid, line in lines.items():
+        info = name_map.get(fid, {"player_id": fid, "number": "", "name": fid})
+        row = dict(info)
+        row.update(line)
+        row["CH"] = line["PO"] + line["E"]
+        row["FLD%"] = round(line["PO"] / row["CH"], 3) if row["CH"] else 0.0
+        result.append(row)
+    result.sort(key=lambda r: (-r["CH"], r["name"]))
+    return result

@@ -455,6 +455,51 @@ class Api:
                 })
         return events
 
+    def _resolve_ids(self, scope, player_id, roster_teams):
+        if player_id:
+            return [player_id]
+        if scope == "my_team":
+            return self._my_team_player_ids(roster_teams)
+        return None
+
+    def get_splits(self, dimension, game_id=None, scope="my_team", player_id=None):
+        if not self.current_team:
+            return {"error": "No team selected."}
+        roster_teams = self._load_roster()
+        ids = self._resolve_ids(scope, player_id, roster_teams)
+        return stats.compute_splits(
+            self._load_games(), roster_teams, dimension, player_ids=ids, game_id=game_id)
+
+    def get_pitching_stats(self, game_id=None, scope="my_team", player_id=None):
+        if not self.current_team:
+            return {"error": "No team selected."}
+        roster_teams = self._load_roster()
+        ids = self._resolve_ids(scope, player_id, roster_teams)
+        return stats.compute_pitching_stats(
+            self._load_games(), roster_teams, pitcher_ids=ids, game_id=game_id)
+
+    def get_baserunning_stats(self, game_id=None, scope="my_team", player_id=None):
+        if not self.current_team:
+            return {"error": "No team selected."}
+        roster_teams = self._load_roster()
+        ids = self._resolve_ids(scope, player_id, roster_teams)
+        return stats.compute_baserunning_stats(
+            self._load_games(), roster_teams, player_ids=ids, game_id=game_id)
+
+    def get_fielding_stats(self, game_id=None, scope="my_team", player_id=None):
+        if not self.current_team:
+            return {"error": "No team selected."}
+        roster_teams = self._load_roster()
+        ids = self._resolve_ids(scope, player_id, roster_teams)
+        return stats.compute_fielding_stats(
+            self._load_games(), roster_teams, player_ids=ids, game_id=game_id)
+
+    def record_substitution(self, entry):
+        if not self.current_game:
+            return {"error": "No active game."}
+        self.current_game.setdefault("substitutions", []).append(entry)
+        return self.current_game
+
     def get_game_log(self):
         if not self.current_team:
             return {"error": "No team selected."}

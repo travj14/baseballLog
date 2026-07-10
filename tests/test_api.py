@@ -206,9 +206,47 @@ def test_export_game_summary_and_season_csv(api):
     assert "error" in api.export_game_summary(None)
 
 
+def test_splits_pitching_baserunning_via_api(api):
+    tid = _my_team_id(api)
+    b = api.add_player(tid, "1", "Al", "Batter")
+    p = api.add_player(tid, "2", "Cy", "Pitch")
+    api.create_game("Rivals", "home", "Field 1")
+    api.pitch({"batter_id": b["id"], "pitcher_id": p["id"], "outcome": "single",
+               "in_zone": True, "balls": 0, "strikes": 0})
+    api.pitch({"batter_id": b["id"], "pitcher_id": p["id"], "outcome": "strikeout",
+               "in_zone": False, "balls": 0, "strikes": 2})
+    api.record_baserunning({"baserunner_id": b["id"], "type": "Stolen Base",
+                            "out": False, "ending_base": "second"})
+    api.save_game()
+
+    splits = api.get_splits("zone", scope="my_team")
+    buckets = {r["bucket"] for r in splits}
+    assert "In zone" in buckets and "Out of zone" in buckets
+
+    pitching = api.get_pitching_stats(scope="my_team")
+    assert pitching and pitching[0]["BF"] == 2 and pitching[0]["SO"] == 1
+
+    running = api.get_baserunning_stats(scope="my_team")
+    assert running and running[0]["SB"] == 1
+
+
+def test_record_substitution(api):
+    api.create_game("Rivals", "home", "Field 1")
+    game = api.record_substitution({"inning": 3, "side": "home",
+                                    "player_in": "pl_9", "player_out": "pl_5",
+                                    "position": "P", "type": "pitching_change"})
+    assert len(game["substitutions"]) == 1
+    assert game["substitutions"][0]["type"] == "pitching_change"
+
+
 def test_error_paths_without_selection(tmp_path):
     a = app.Api(str(tmp_path))
     assert "error" in a.get_batting_stats()
+    assert "error" in a.get_splits("zone")
+    assert "error" in a.get_pitching_stats()
+    assert "error" in a.get_baserunning_stats()
+    assert "error" in a.get_fielding_stats()
+    assert "error" in a.record_substitution({})
     assert "error" in a.get_roster_teams()
     assert "error" in a.undo_last_event(0, 0)
     assert "error" in a.get_pitch_events()

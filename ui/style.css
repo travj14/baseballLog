@@ -1434,3 +1434,67 @@ input[type="text"] {
     padding: 2px 6px;
     font-size: 12px;
 }
+
+/* --- Substitution button (game screen) --- */
+
+.sub-btn {
+    position: absolute;
+    left: 0;
+    top: 90px;
+    color: #fff;
+    background: #0891b2;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 20px;
+    font-size: 1rem;
+    cursor: pointer;
+}
+
+.sub-btn:hover {
+    background: #0e7490;
+}
+
+/* --- Batted-ball fielder buttons --- */
+
+.bb-fielders {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 6px;
+    margin: 0 auto 14px;
+    max-width: 260px;
+}
+
+.bb-fielders button {
+    padding: 6px 0;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    background: #fff;
+    color: #111;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.bb-fielders button.active {
+    background: #2563eb;
+    color: #fff;
+    border-color: #2563eb;
+}
+
+/* --- Unearned run checkbox --- */
+
+.unearned-check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: #374151;
+    margin: 8px 0;
+    cursor: pointer;
+}
+
+/* --- Heat map cell labels --- */
+
+#heat-map text {
+    font-variant-numeric: tabular-nums;
+    pointer-events: none;
+}

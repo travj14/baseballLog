@@ -178,17 +178,71 @@
                     <div id="spray-legend" class="chart-legend"></div>
                     <p id="spray-empty" class="chart-empty hidden">No batted-ball locations recorded yet.</p>
                 </figure>
+
+                <figure class="chart-card">
+                    <figcaption>Pitch heat map <span class="chart-sub">pitches per zone</span></figcaption>
+                    <svg id="heat-map" class="chart-svg" viewBox="0 0 240 260" role="img" aria-label="Strike-zone heat map"></svg>
+                    <div id="heat-legend" class="chart-legend"></div>
+                    <p id="heat-empty" class="chart-empty hidden">No located pitches yet.</p>
+                </figure>
             </div>
+
+            <h2 class="analysis-section-title">Splits</h2>
+            <div class="analysis-controls">
+                <label for="splits-dimension">Split by</label>
+                <select id="splits-dimension">
+                    <option value="count">Count</option>
+                    <option value="zone">Zone</option>
+                    <option value="inning">Inning</option>
+                    <option value="baseout">Base / out state</option>
+                    <option value="opponent">Opponent</option>
+                    <option value="pitch_type">Pitch type</option>
+                </select>
+            </div>
+            <div class="stats-table-wrap">
+                <table class="stats-table"><thead id="splits-head"></thead><tbody id="splits-body"></tbody></table>
+            </div>
+            <p id="splits-empty" class="analysis-empty hidden">No data for this split yet.</p>
+
+            <h2 class="analysis-section-title">Pitching</h2>
+            <div class="stats-table-wrap">
+                <table class="stats-table"><thead id="pitching-head"></thead><tbody id="pitching-body"></tbody></table>
+            </div>
+            <p id="pitching-empty" class="analysis-empty hidden">No pitching data yet.</p>
+
+            <h2 class="analysis-section-title">Baserunning</h2>
+            <div class="stats-table-wrap">
+                <table class="stats-table"><thead id="baserunning-head"></thead><tbody id="baserunning-body"></tbody></table>
+            </div>
+            <p id="baserunning-empty" class="analysis-empty hidden">No baserunning events yet.</p>
+
+            <h2 class="analysis-section-title">Fielding</h2>
+            <div class="stats-table-wrap">
+                <table class="stats-table"><thead id="fielding-head"></thead><tbody id="fielding-body"></tbody></table>
+            </div>
+            <p id="fielding-empty" class="analysis-empty hidden">No fielding plays recorded yet. Tag a fielder on outs/errors while scoring.</p>
         </div>
     </div>
 
-    <!-- Batted-ball location picker -->
+    <!-- Batted-ball location & fielder picker -->
     <div id="batted-ball-modal" class="modal-overlay hidden">
         <div class="modal bb-modal">
-            <h2>Where was it hit?</h2>
-            <p class="bb-hint">Click the field, or skip.</p>
+            <h2>Batted ball</h2>
+            <p class="bb-hint">Click where it went and/or tag the fielder. All optional.</p>
             <svg id="bb-field" class="bb-field" viewBox="0 0 200 200"></svg>
+            <div id="bb-fielders" class="bb-fielders">
+                <button type="button" data-pos="1">P</button>
+                <button type="button" data-pos="2">C</button>
+                <button type="button" data-pos="3">1B</button>
+                <button type="button" data-pos="4">2B</button>
+                <button type="button" data-pos="5">3B</button>
+                <button type="button" data-pos="6">SS</button>
+                <button type="button" data-pos="7">LF</button>
+                <button type="button" data-pos="8">CF</button>
+                <button type="button" data-pos="9">RF</button>
+            </div>
             <div class="form-buttons">
+                <button id="bb-done-btn" type="button" class="btn-green">Done</button>
                 <button id="bb-skip-btn" type="button">Skip</button>
             </div>
         </div>
@@ -283,6 +337,29 @@
         </div>
     </div>
 
+    <!-- Substitution Modal -->
+    <div id="sub-modal" class="modal-overlay hidden">
+        <div class="modal">
+            <h2>Substitution</h2>
+            <label for="sub-side">Team</label>
+            <select id="sub-side">
+                <option value="home">Home</option>
+                <option value="away">Away</option>
+            </select>
+            <label for="sub-out">Player out</label>
+            <select id="sub-out"></select>
+            <label for="sub-in">Player in</label>
+            <select id="sub-in"></select>
+            <label for="sub-position">Position (optional)</label>
+            <input type="text" id="sub-position" placeholder="keeps current if blank">
+            <div class="form-buttons">
+                <button type="button" id="sub-confirm-btn" class="btn-green">Confirm</button>
+                <button type="button" id="sub-cancel-btn" class="btn-cancel">Cancel</button>
+            </div>
+            <p id="sub-error" class="error hidden"></p>
+        </div>
+    </div>
+
     <!-- Enter Game Modal -->
     <div id="enter-game-modal" class="modal-overlay hidden">
         <div class="modal">
@@ -329,6 +406,7 @@
         <div class="game-screen-top-row">
             <button id="back-dashboard-btn" class="back-btn">Back</button>
             <button id="undo-btn" class="undo-btn" disabled>Undo</button>
+            <button id="sub-btn" class="sub-btn">Sub</button>
             <button id="save-game-btn" class="save-btn">Save</button>
             <button id="end-game-btn" class="end-game-btn">End Game</button>
             <div class="score-bug">
@@ -467,6 +545,9 @@
     <div id="runner-resolution" class="runner-resolution hidden">
         <h3>Runner Resolution</h3>
         <div id="runner-resolution-list"></div>
+        <label class="unearned-check">
+            <input type="checkbox" id="runner-resolution-unearned"> Run(s) unearned (error/PB)
+        </label>
         <div class="form-buttons">
             <button id="runner-resolution-confirm" class="btn-green">Confirm</button>
         </div>

@@ -29,6 +29,7 @@ def _migrate_v1_to_v2(game):
     game.setdefault("away_lineup", [])
     game.setdefault("pitches", [])
     game.setdefault("baserunning", [])
+    game.setdefault("substitutions", [])
     game.setdefault("pitch_counts", {})
     game.setdefault("home_score", 0)
     game.setdefault("away_score", 0)
