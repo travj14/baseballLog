@@ -197,6 +197,8 @@
                     <option value="baseout">Base / out state</option>
                     <option value="opponent">Opponent</option>
                     <option value="pitch_type">Pitch type</option>
+                    <option value="bat_side">Batter side</option>
+                    <option value="vs_hand">vs Pitcher hand</option>
                 </select>
             </div>
             <div class="stats-table-wrap">
@@ -228,7 +230,7 @@
     <div id="batted-ball-modal" class="modal-overlay hidden">
         <div class="modal bb-modal">
             <h2>Batted ball</h2>
-            <p class="bb-hint">Click where it went and/or tag the fielder. All optional.</p>
+            <p class="bb-hint">Click where it went, then tap fielders in order (e.g. 6&#8209;4&#8209;3). All optional.</p>
             <svg id="bb-field" class="bb-field" viewBox="0 0 200 200"></svg>
             <div id="bb-fielders" class="bb-fielders">
                 <button type="button" data-pos="1">P</button>
@@ -240,6 +242,9 @@
                 <button type="button" data-pos="7">LF</button>
                 <button type="button" data-pos="8">CF</button>
                 <button type="button" data-pos="9">RF</button>
+            </div>
+            <div class="bb-chain">Fielders: <span id="bb-chain-display">—</span>
+                <button type="button" id="bb-chain-clear" class="btn-small btn-cancel">Clear</button>
             </div>
             <div class="form-buttons">
                 <button id="bb-done-btn" type="button" class="btn-green">Done</button>
@@ -261,6 +266,19 @@
                 <input type="text" id="player-first" required>
                 <label for="player-last">Last Name</label>
                 <input type="text" id="player-last" required>
+                <label for="player-bats">Bats</label>
+                <select id="player-bats">
+                    <option value="">Unknown</option>
+                    <option value="R">Right</option>
+                    <option value="L">Left</option>
+                    <option value="S">Switch</option>
+                </select>
+                <label for="player-throws">Throws</label>
+                <select id="player-throws">
+                    <option value="">Unknown</option>
+                    <option value="R">Right</option>
+                    <option value="L">Left</option>
+                </select>
                 <div class="form-buttons">
                     <button type="submit">Save</button>
                     <button type="button" id="cancel-player-btn" class="btn-cancel">Cancel</button>

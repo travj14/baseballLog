@@ -15,8 +15,13 @@ def _roster(my_players, opp_players=None):
     return teams
 
 
-def _p(pid, fn, ln, num="1"):
-    return {"id": pid, "first_name": fn, "last_name": ln, "number": num}
+def _p(pid, fn, ln, num="1", bats=None, throws=None):
+    d = {"id": pid, "first_name": fn, "last_name": ln, "number": num}
+    if bats:
+        d["bats"] = bats
+    if throws:
+        d["throws"] = throws
+    return d
 
 
 # --- Splits ---
@@ -99,6 +104,100 @@ def test_baserunning_stats():
 
 
 # --- Fielding ---
+
+def test_split_by_handedness():
+    roster = _roster(
+        [_p("b1", "Lefty", "Bat", bats="L")],
+        [_p("pit", "Righty", "Arm", throws="R")],
+    )
+    games = [{"id": "g1", "pitches": [
+        {"batter_id": "b1", "pitcher_id": "pit", "outcome": "single"},
+    ]}]
+    bat = stats.compute_splits(games, roster, "bat_side")
+    assert bat[0]["bucket"] == "LHB"
+    vs = stats.compute_splits(games, roster, "vs_hand")
+    assert vs[0]["bucket"] == "vs RHP"
+
+
+# --- Earned-run reconstruction ---
+
+def test_run_by_runner_who_reached_on_error_is_unearned():
+    roster = _roster([], [_p("pit", "Cy", "Young")])
+    game = {
+        "id": "g1",
+        "pitches": [
+            {"id": "p1", "inning": 1, "half": "top", "outcome": "error", "batter_id": "e1", "pitcher_id": "pit"},
+            {"id": "p2", "inning": 1, "half": "top", "outcome": "single", "batter_id": "b2", "pitcher_id": "pit"},
+        ],
+        "baserunning": [
+            {"baserunner_id": "e1", "ending_base": "home", "pitch_id": "p2", "pitcher_id": "pit", "earned": True},
+        ],
+    }
+    r = stats.compute_pitching_stats([game], roster)[0]
+    assert r["R"] == 1
+    assert r["ER"] == 0  # e1 reached on error -> unearned
+
+
+def test_run_after_reconstructed_third_out_is_unearned():
+    roster = _roster([], [_p("pit", "Cy", "Young")])
+    game = {
+        "id": "g1",
+        "pitches": [
+            {"id": "p1", "inning": 1, "half": "top", "outcome": "error", "batter_id": "e1", "pitcher_id": "pit"},
+            {"id": "p2", "inning": 1, "half": "top", "outcome": "out", "batter_id": "b2", "pitcher_id": "pit"},
+            {"id": "p3", "inning": 1, "half": "top", "outcome": "out", "batter_id": "b3", "pitcher_id": "pit"},
+            {"id": "p4", "inning": 1, "half": "top", "outcome": "single", "batter_id": "b4", "pitcher_id": "pit"},
+        ],
+        "baserunning": [
+            # A clean runner scores, but the inning should already be over
+            # (error + 2 outs = 3 reconstructed outs).
+            {"baserunner_id": "b4", "ending_base": "home", "pitch_id": "p4", "pitcher_id": "pit", "earned": True},
+        ],
+    }
+    r = stats.compute_pitching_stats([game], roster)[0]
+    assert r["R"] == 1
+    assert r["ER"] == 0
+
+
+def test_clean_run_is_earned():
+    roster = _roster([], [_p("pit", "Cy", "Young")])
+    game = {
+        "id": "g1",
+        "pitches": [
+            {"id": "p1", "inning": 1, "half": "top", "outcome": "single", "batter_id": "b1", "pitcher_id": "pit"},
+        ],
+        "baserunning": [
+            {"baserunner_id": "b1", "ending_base": "home", "pitch_id": "p1", "pitcher_id": "pit", "earned": True},
+        ],
+    }
+    r = stats.compute_pitching_stats([game], roster)[0]
+    assert r["R"] == 1
+    assert r["ER"] == 1
+
+
+# --- Detailed fielding ---
+
+def test_fielding_double_play_chain():
+    roster = _roster([], [_p("f6", "S", "S", num="6"), _p("f4", "T", "B", num="4"), _p("f3", "F", "B", num="3")])
+    game = {
+        "id": "g1",
+        "away_lineup": [
+            {"id": "f6", "position": "6"}, {"id": "f4", "position": "4"}, {"id": "f3", "position": "3"},
+        ],
+        "home_lineup": [],
+        "pitches": [
+            {"id": "p1", "half": "bottom", "outcome": "out", "fielding_play": ["6", "4", "3"]},
+        ],
+        "baserunning": [
+            {"baserunner_id": "r1", "pitch_id": "p1", "out": True},  # lead runner out -> 2 outs = DP
+        ],
+    }
+    rows = {r["player_id"]: r for r in stats.compute_fielding_stats([game], roster)}
+    assert rows["f3"]["PO"] == 1 and rows["f3"]["A"] == 0
+    assert rows["f6"]["A"] == 1 and rows["f4"]["A"] == 1
+    assert all(rows[f]["DP"] == 1 for f in ("f3", "f4", "f6"))
+    assert rows["f6"]["POS"] == "SS"
+
 
 def test_fielding_stats_resolve_position_to_player():
     # Away team fields in the bottom half; SS (pos 6) is f1.

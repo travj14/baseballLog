@@ -575,8 +575,9 @@ const BASERUNNING_COLS = [
     { key: "SB%", label: "SB%", rate: true },
 ];
 const FIELDING_COLS = [
-    { key: "POS", label: "POS" }, { key: "PO", label: "PO" }, { key: "E", label: "E" },
-    { key: "CH", label: "CH" }, { key: "FLD%", label: "FLD%", rate: true },
+    { key: "POS", label: "POS" }, { key: "PO", label: "PO" }, { key: "A", label: "A" },
+    { key: "E", label: "E" }, { key: "DP", label: "DP" }, { key: "CH", label: "CH" },
+    { key: "FLD%", label: "FLD%", rate: true },
 ];
 
 async function loadAdvancedTables(gameId, scope, playerId) {
@@ -781,11 +782,13 @@ addPlayerForm.addEventListener("submit", async (e) => {
     const number = document.getElementById("player-number").value;
     const firstName = document.getElementById("player-first").value;
     const lastName = document.getElementById("player-last").value;
+    const bats = document.getElementById("player-bats").value;
+    const throws = document.getElementById("player-throws").value;
 
     const myTeam = await window.pywebview.api.get_my_team();
     if (myTeam.error) return;
 
-    const result = await window.pywebview.api.add_player(myTeam.id, number, firstName, lastName);
+    const result = await window.pywebview.api.add_player(myTeam.id, number, firstName, lastName, bats, throws);
     if (result.error) {
         playerError.textContent = result.error;
         playerError.classList.remove("hidden");
@@ -1810,7 +1813,8 @@ function buildPitchData(outcome, hitResult, hitType, strikeType) {
         strike_type: strikeType || null,
         batted_ball_x: battedBallLoc ? battedBallLoc.x : null,
         batted_ball_y: battedBallLoc ? battedBallLoc.y : null,
-        fielded_by: battedBallLoc ? battedBallLoc.fielder : null,
+        fielding_play: (battedBallLoc && battedBallLoc.fieldingPlay) ? battedBallLoc.fieldingPlay : null,
+        fielded_by: (battedBallLoc && battedBallLoc.fieldingPlay) ? battedBallLoc.fieldingPlay[battedBallLoc.fieldingPlay.length - 1] : null,
         home_score: selectedGame.home_score,
         away_score: selectedGame.away_score,
     };
@@ -2212,18 +2216,25 @@ document.querySelectorAll("#hit-type-submenu .pitch-menu-item").forEach(btn => {
 
 let bbResolve = null;
 let bbPendingLoc = null;      // {x, y} click on the field, or null
-let bbPendingFielder = null;  // position string "1".."9", or null
+let bbPendingChain = [];      // ordered fielder positions, e.g. ["6","4","3"]
 let bbMarker = null;
 const battedBallModal = document.getElementById("batted-ball-modal");
 const bbField = document.getElementById("bb-field");
+
+const POS_LABELS = { "1": "P", "2": "C", "3": "1B", "4": "2B", "5": "3B", "6": "SS", "7": "LF", "8": "CF", "9": "RF" };
+
+function renderBBChain() {
+    document.getElementById("bb-chain-display").textContent =
+        bbPendingChain.length ? bbPendingChain.map(p => POS_LABELS[p] || p).join(" → ") : "—";
+}
 
 function pickBattedBallLocation() {
     return new Promise((resolve) => {
         bbResolve = resolve;
         bbPendingLoc = null;
-        bbPendingFielder = null;
+        bbPendingChain = [];
         if (bbMarker) { bbMarker.remove(); bbMarker = null; }
-        document.querySelectorAll("#bb-fielders button").forEach(b => b.classList.remove("active"));
+        renderBBChain();
         battedBallModal.classList.remove("hidden");
     });
 }
@@ -2254,23 +2265,21 @@ if (bbField) {
 
     document.querySelectorAll("#bb-fielders button").forEach(btn => {
         btn.addEventListener("click", () => {
-            const already = btn.classList.contains("active");
-            document.querySelectorAll("#bb-fielders button").forEach(b => b.classList.remove("active"));
-            if (already) {
-                bbPendingFielder = null;
-            } else {
-                btn.classList.add("active");
-                bbPendingFielder = btn.dataset.pos;
-            }
+            bbPendingChain.push(btn.dataset.pos);  // ordered chain (6-4-3)
+            renderBBChain();
         });
+    });
+    document.getElementById("bb-chain-clear").addEventListener("click", () => {
+        bbPendingChain = [];
+        renderBBChain();
     });
 
     document.getElementById("bb-done-btn").addEventListener("click", () => {
-        if (!bbPendingLoc && !bbPendingFielder) { resolveBattedBall(null); return; }
+        if (!bbPendingLoc && bbPendingChain.length === 0) { resolveBattedBall(null); return; }
         resolveBattedBall({
             x: bbPendingLoc ? bbPendingLoc.x : null,
             y: bbPendingLoc ? bbPendingLoc.y : null,
-            fielder: bbPendingFielder,
+            fieldingPlay: bbPendingChain.length ? bbPendingChain.slice() : null,
         });
     });
     document.getElementById("bb-skip-btn").addEventListener("click", () => resolveBattedBall(null));

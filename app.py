@@ -144,7 +144,7 @@ class Api:
                 return team
         return {"error": "No team flagged as my_team."}
 
-    def add_player(self, team_id, number, first_name, last_name):
+    def add_player(self, team_id, number, first_name, last_name, bats=None, throws=None):
         if not self.current_team:
             return {"error": "No team selected."}
 
@@ -158,6 +158,8 @@ class Api:
                     "number": number,
                     "first_name": first_name,
                     "last_name": last_name,
+                    "bats": bats or None,
+                    "throws": throws or None,
                 }
                 team["roster"].append(player)
                 self._save_roster(teams)

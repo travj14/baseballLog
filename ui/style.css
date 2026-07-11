@@ -1498,3 +1498,26 @@ input[type="text"] {
     font-variant-numeric: tabular-nums;
     pointer-events: none;
 }
+
+/* --- Batted-ball fielder chain --- */
+
+.bb-chain {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    font-size: 13px;
+    color: #374151;
+    margin-bottom: 8px;
+}
+
+#bb-chain-display {
+    font-weight: 700;
+    color: #111827;
+    font-variant-numeric: tabular-nums;
+}
+
+.bb-chain .btn-small {
+    padding: 3px 10px;
+    font-size: 12px;
+}
